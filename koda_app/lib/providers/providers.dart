@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:camera/camera.dart';
-import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../models/models.dart';
@@ -259,6 +257,8 @@ class BrainNotifier extends StateNotifier<BrainState> {
   String _systemPrompt = '';
   String _recentHistoryStr = '';
   DateTime? _lastApiCallTime;
+  int _processingDepth = 0;
+  bool _cancelRequested = false;
 
   BrainNotifier(this._llm, this._tts, this._stt, this._bleNotifier, this._ctx, this._ref)
       : super(const BrainState()) {
@@ -270,7 +270,7 @@ class BrainNotifier extends StateNotifier<BrainState> {
       onSpeak: (text) => _tts.speak(text),
       onLog: (type, msg) => addLog(type, msg),
       onProcessInput: (input, {isLoopStep = false}) =>
-          processInput(input, isLoopStep: isLoopStep),
+          processInput(input, isLoopStep: isLoopStep, isInternal: true),
       onStartListen: ({required onResult}) =>
           _stt.startListening(onResult: onResult),
       onStopListen: () => _stt.stopListening(),
@@ -358,6 +358,14 @@ class BrainNotifier extends StateNotifier<BrainState> {
   }
 
   void forceListenOnce(VoidCallback onDone) {
+    if (_processingDepth > 0) {
+      _cancelRequested = true;
+      _tts.stop();
+      _stt.stopListening();
+      _bleNotifier.sendCommand(const MotorCommand(cmd: KodaCmd.stop, ms: 0));
+      _addLog('sys', 'Processing interrupted by user.');
+    }
+
     _stt.startListening(
       onResult: (text) async {
         if (text.isNotEmpty) {
@@ -383,10 +391,20 @@ class BrainNotifier extends StateNotifier<BrainState> {
     );
   }
 
-  Future<void> processInput(String input, {bool isLoopStep = false}) async {
+  Future<void> processInput(String input, {bool isLoopStep = false, bool isInternal = false}) async {
     if (!state.active) return;
+    
+    if (_processingDepth == 0) _cancelRequested = false;
+    if (_cancelRequested) return;
 
-    if (!isLoopStep) _skillExecutor.resetLoopCount();
+    if (_processingDepth > 0 && !isInternal) {
+      _addLog('sys', 'System busy. Ignoring input: $input');
+      return;
+    }
+    
+    _processingDepth++;
+    try {
+      if (!isLoopStep) _skillExecutor.resetLoopCount();
 
     state = state.copyWith(status: BrainStatus.thinking);
     _addLog('sys', 'Thinking…');
@@ -445,8 +463,11 @@ class BrainNotifier extends StateNotifier<BrainState> {
     }
     _lastApiCallTime = DateTime.now();
 
+    // Force the LLM to remember the output format at the very end of the prompt
+    final enforcedInput = '$input\n\n[SYSTEM REMINDER: You MUST respond ONLY with the valid JSON unified command format containing the "actions" array. Do not output any conversational text outside of the JSON.]';
+
     final response = await _llm.chat(
-      userMessage: input,
+      userMessage: enforcedInput,
       systemPrompt: dynamicSystemPrompt,
       imageBytes: imageBytes,
       visionContext: visionContext,
@@ -466,7 +487,7 @@ class BrainNotifier extends StateNotifier<BrainState> {
     // Execute all actions in sequence
     state = state.copyWith(status: BrainStatus.executing);
     for (final action in response.actions) {
-      if (!state.active) break;
+      if (!state.active || _cancelRequested) break;
       await _skillExecutor.run(action);
     }
 
@@ -481,6 +502,9 @@ class BrainNotifier extends StateNotifier<BrainState> {
     );
     if (state.active && _ref.read(settingsProvider).voiceEnabled && !hasOpenLoop) {
       _startListening();
+    }
+    } finally {
+      _processingDepth--;
     }
   }
 }

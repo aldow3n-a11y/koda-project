@@ -46,9 +46,9 @@ Rotate in place.
 ### listen
 Stop and listen for user speech. Use when you want to ask a question and wait for an answer.
 ```json
-{"skill": "listen", "timeout": 10}
+{"skill": "listen", "timeout": 15}
 ```
-- timeout: seconds to wait (default 10, max 30)
+- timeout: seconds to wait (default 15, max 30) add more seconds if your response is longer.
 
 ### evaluate_location
 Take a photo and call the LLM again with current visual context. Use to check surroundings before moving or to continue navigation loops.

@@ -98,7 +98,7 @@ class _KodaShellState extends ConsumerState<KodaShell> {
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                 color: ble.isConnected
-                    ? KodaColors.green.withOpacity(0.12)
+                    ? KodaColors.green.withValues(alpha: 0.12)
                     : Colors.transparent,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(

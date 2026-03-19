@@ -183,7 +183,7 @@ class AppSettings {
     this.bleDeviceName = 'KODA-ESP32',
     this.bleWatchdogMs = 3000,
     this.maxTokens = 1000,
-    this.llmCooldownMs = 800,
+    this.llmCooldownMs = 2500,
     this.maxLoopIterations = 20,
     this.keepScreenAwake = true,
   });

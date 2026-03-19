@@ -90,7 +90,6 @@ class _AnimatedRobotEyesState extends State<AnimatedRobotEyes> with SingleTicker
         height = 10;
         break;
       case RobotEmotion.neutral:
-      default:
         break;
     }
 

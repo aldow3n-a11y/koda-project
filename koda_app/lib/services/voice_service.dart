@@ -18,6 +18,7 @@ class TtsService {
     await _tts.setSpeechRate(0.5);
     await _tts.setVolume(1.0);
     await _tts.setPitch(1.0);
+    await _tts.awaitSpeakCompletion(true);
 
     // Apply saved voice or auto-select the best available
     if (savedVoiceName != null && savedVoiceName.isNotEmpty) {
@@ -125,8 +126,8 @@ class TtsService {
 
   Future<List<dynamic>> getVoices() async => await _tts.getVoices;
 
-  Future<void> setVoice(String locale) async {
-    await _tts.setLanguage(locale);
+  Future<void> setVoice(String name) async {
+    await _applyVoiceByName(name);
   }
 
   void dispose() {

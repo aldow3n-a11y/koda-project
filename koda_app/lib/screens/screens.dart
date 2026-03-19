@@ -340,7 +340,7 @@ class _BrainScreenState extends ConsumerState<BrainScreen> with WidgetsBindingOb
                         decoration: BoxDecoration(
                           color: const Color(0xFF1A1200),
                           borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: KodaColors.amber.withOpacity(0.4)),
+                          border: Border.all(color: KodaColors.amber.withValues(alpha: 0.4)),
                         ),
                         child: Text(
                           'ℹ  Bluetooth not connected — Motor commands will be ignored.',
@@ -391,7 +391,7 @@ class _BrainScreenState extends ConsumerState<BrainScreen> with WidgetsBindingOb
                             ),
                           ),
                           // Dark dimming layer so the glowing eyes pop
-                          Container(color: Colors.black.withOpacity(0.4)),
+                          Container(color: Colors.black.withValues(alpha: 0.4)),
                           // Robot Eyes HUD overlay
                           Builder(builder: (context) {
                             // Use the emotion decided by the LLM
@@ -509,14 +509,14 @@ class _BrainScreenState extends ConsumerState<BrainScreen> with WidgetsBindingOb
                   height: _isListening ? 72 : 60,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _isListening ? KodaColors.green.withOpacity(0.18) : const Color(0xFF1A1200),
+                    color: _isListening ? KodaColors.green.withValues(alpha: 0.18) : const Color(0xFF1A1200),
                     border: Border.all(
                       color: _isListening ? KodaColors.green : KodaColors.amber,
                       width: 2,
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: (_isListening ? KodaColors.green : KodaColors.amber).withOpacity(0.25),
+                        color: (_isListening ? KodaColors.green : KodaColors.amber).withValues(alpha: 0.25),
                         blurRadius: 16, spreadRadius: 2,
                       ),
                     ],
@@ -810,7 +810,7 @@ class _PairedScreenState extends ConsumerState<PairedScreen> {
                       ),
                     Positioned(
                       top: 8, right: 8,
-                      child: StatusBadge(label: 'PAIRED', color: KodaColors.green),
+                      child: const StatusBadge(label: 'PAIRED', color: KodaColors.green),
                     ),
                   ],
                 ),
@@ -994,7 +994,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             label: 'Model',
             sub: 'Haiku recommended for speed + cost',
             child: DropdownButtonFormField<String>(
-              value: s.model,
+              initialValue: s.model,
               dropdownColor: KodaColors.panel2,
               style: monoStyle(size: 11, color: KodaColors.text),
               decoration: const InputDecoration(),
@@ -1007,6 +1007,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     child: Text('Opus 4.6 — Smart')),
                 DropdownMenuItem(value: 'gemini-2.0-flash',
                     child: Text('Gemini 2.0 Flash')),
+                DropdownMenuItem(value: 'gemini-2.5-flash',
+                    child: Text('Gemini 2.5 Flash')),
+                DropdownMenuItem(value: 'gemini-3-flash',
+                    child: Text('Gemini 3 Flash — Experimental')),
               ],
               onChanged: (v) => sN.updateField((s) => s.copyWith(model: v)),
             ),
@@ -1068,7 +1072,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ? currentName
                     : voices.first['name']!;
                 return DropdownButtonFormField<String>(
-                  value: validValue,
+                  initialValue: validValue,
                   dropdownColor: KodaColors.panel2,
                   isExpanded: true,
                   style: monoStyle(size: 11, color: KodaColors.text),
@@ -1094,6 +1098,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     final match = voices.firstWhere((x) => x['name'] == v,
                         orElse: () => {});
                     if (match.isNotEmpty) {
+                      await tts.setVoice(match['name']!);
                       await tts.speak('Hi! This is how I sound now.');
                     }
                   },
@@ -1312,7 +1317,7 @@ class _SwitchTile extends StatelessWidget {
         title: Text(label, style: bodyStyle(size: 13)),
         value: value,
         onChanged: onChanged,
-        activeColor: KodaColors.amber,
+        activeThumbColor: KodaColors.amber,
       );
 }
 
@@ -1328,9 +1333,9 @@ class _ActionButton extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.08),
+            color: color.withValues(alpha: 0.08),
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: color.withOpacity(0.4)),
+            border: Border.all(color: color.withValues(alpha: 0.4)),
           ),
           child: Center(
             child: Text(label,

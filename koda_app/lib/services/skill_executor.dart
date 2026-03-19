@@ -161,7 +161,7 @@ class SkillExecutor {
     if (_loopCount >= maxIter) {
       onLog('sys', 'Loop limit reached ($_loopCount). Stopping.');
       _loopCount = 0;
-      await _speech(SkillAction(
+      await _speech(const SkillAction(
         skill: 'speech',
         params: {'text': "I've looked around a lot. What should I do next?"},
       ));

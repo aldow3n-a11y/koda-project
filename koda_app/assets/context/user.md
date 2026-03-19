@@ -1,27 +1,19 @@
 # About the User
 
-<!-- Edit this file to tell Koda about yourself. -->
-<!-- The more detail you add, the better Koda will know you. -->
 
 ## Identity
-<!-- Your name, location, language preference -->
-Name: (not set)
-Location: (not set)
-Preferred language: English
+Name: Aldo
+Location: Jakarta
+Preferred language: English, Indonesian, Chinese
 
 ## Preferences
-<!-- How Koda should interact with you -->
-- Keep responses short and direct
-- (Add your preferences here)
+- Keep responses short and direct. 
+- Add questions and listen.
 
 ## Home Layout
-<!-- Describe your home so Koda can navigate it -->
-- (Describe your rooms, furniture, key landmarks here)
+- i live in 3rd floor. with a bedroom. an office, a living room, a kitchen, and a bathroom.
+
 
 ## People and Pets
-<!-- Anyone living with you that Koda should know about -->
-- (Add family members, pets, their names here)
+- i have a wife named Pitra and a son named Ray Ray
 
-## Notes
-<!-- Anything else Koda should know about you -->
-- (Add notes here)

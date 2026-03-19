@@ -8,11 +8,10 @@
 
 ## Movement
 - Speed: 0–100% (mapped to 0–255 PWM)
-- Safe indoor speed: 35–65%
+- Safe indoor speed: 35–85%
 - Each `move` or `turn` command runs for exactly `ms` milliseconds, then stops automatically.
-- NEVER use a stop command — the `ms` parameter handles stopping.
 - Chain multiple moves for complex paths.
-- Max single command: 1500ms
+- Max single command: 5000ms
 
 ## Camera
 - Phone camera mounted on robot (front or rear selectable)
