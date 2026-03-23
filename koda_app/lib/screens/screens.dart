@@ -1053,12 +1053,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _SettingsTile(
             label: 'Model',
             sub: '2026 Cloud Vision models supported',
-            child: DropdownButtonFormField<String>(
-              value: s.model,
-              dropdownColor: KodaColors.panel2,
-              style: monoStyle(size: 11, color: KodaColors.text),
-              decoration: const InputDecoration(),
-              items: const [
+            child: Builder(builder: (context) {
+              const modelItems = [
                 DropdownMenuItem(value: 'qwen3.5',
                     child: Text('Qwen 3.5 — Cloud Vision')),
                 DropdownMenuItem(value: 'kimi-k2.5',
@@ -1073,9 +1069,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     child: Text('Sonnet 4.6 — Balanced')),
                 DropdownMenuItem(value: 'gemini-2.0-flash',
                     child: Text('Gemini 2.0 Flash')),
-              ],
-              onChanged: (v) => sN.updateField((s) => s.copyWith(model: v)),
-            ),
+                DropdownMenuItem(value: 'gemini-2.5-flash',
+                    child: Text('Gemini 2.5 Flash')),
+              ];
+              final knownValues = modelItems.map((e) => e.value).toList();
+              final safeModel = knownValues.contains(s.model)
+                  ? s.model
+                  : knownValues.first;
+              return DropdownButtonFormField<String>(
+                value: safeModel,
+                dropdownColor: KodaColors.panel2,
+                style: monoStyle(size: 11, color: KodaColors.text),
+                decoration: const InputDecoration(),
+                items: modelItems,
+                onChanged: (v) => sN.updateField((s) => s.copyWith(model: v)),
+              );
+            }),
           ),
           _SettingsTile(
             label: 'API URL',
@@ -1354,7 +1363,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       child: OutlinedButton(
                         onPressed: () => sN.updateField((s) => s.copyWith(lidarAngularOffset: 40.0)),
                         style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: KodaColors.amber.withValues(alpha: 0.4)),
+                          side: BorderSide(color: KodaColors.amber.withValues(alpha: 0.4)),
                           foregroundColor: KodaColors.amber,
                         ),
                         child: Text('RESET TO 40°', style: monoStyle(size: 10, color: KodaColors.amber)),
@@ -1368,6 +1377,57 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 12),
 
           // ── Live scan stats ─────────────────────────────────────────────
+          const SizedBox(height: 12),
+
+          // ── Dot decay time ──────────────────────────────────────────────
+          KodaCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('DOT DECAY', style: monoStyle(size: 11, color: KodaColors.amber, spacing: 2)),
+                const SizedBox(height: 6),
+                Text(
+                  'How long before obstacle dots fade when no longer seen by LiDAR. '
+                  '0 = never decay.',
+                  style: monoStyle(size: 10, color: KodaColors.sub),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Text('DECAY TIME', style: monoStyle(size: 10, color: KodaColors.dim)),
+                    const Spacer(),
+                    Text(
+                      s.lidarDecaySec == 0
+                          ? 'NEVER'
+                          : '${s.lidarDecaySec}s',
+                      style: monoStyle(size: 13, color: KodaColors.blue),
+                    ),
+                  ],
+                ),
+                Slider(
+                  value: s.lidarDecaySec.toDouble(),
+                  min: 0,
+                  max: 300,
+                  divisions: 30,
+                  activeColor: KodaColors.blue,
+                  inactiveColor: KodaColors.border,
+                  onChanged: (v) => sN.updateField(
+                    (s) => s.copyWith(lidarDecaySec: v.round()),
+                  ),
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Never', style: monoStyle(size: 9, color: KodaColors.dim)),
+                    Text('30s', style: monoStyle(size: 9, color: KodaColors.dim)),
+                    Text('5min', style: monoStyle(size: 9, color: KodaColors.dim)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
           Consumer(builder: (context, ref, _) {
             final lidar = ref.watch(lidarProvider);
             return KodaCard(

@@ -249,7 +249,7 @@ class _LidarMapCardState extends State<LidarMapCard> {
                 const SizedBox(width: 8),
                 // Mode badge
                 _ModeBadge(
-                  mode: widget.slamMode,
+                  slamMode: widget.slamMode,
                   secsLeft: widget.bootstrapSecsLeft,
                   isReceiving: widget.isReceiving,
                 ),

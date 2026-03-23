@@ -145,6 +145,35 @@ class SlamService {
   // Callback — UI listens to mode + countdown changes
   void Function(SlamMode mode, int secsLeft)? onStateChange;
 
+  // ── Decay timer ────────────────────────────────────────────────────────────
+  Timer? _decayTimer;
+
+  /// Call whenever `lidarDecaySec` setting changes. `delaySec` == 0 disables.
+  void setDecay(int delaySec) {
+    _decayTimer?.cancel();
+    _decayTimer = null;
+    if (delaySec > 0) {
+      _decayTimer = Timer.periodic(
+        Duration(seconds: delaySec),
+        (_) => _runDecay(),
+      );
+    }
+  }
+
+  void _runDecay() {
+    bool changed = false;
+    for (int y = 0; y < kGridSize; y++) {
+      for (int x = 0; x < kGridSize; x++) {
+        final v = grid.cells[y][x];
+        if (v > 0) {
+          grid.cells[y][x] = (v - 10).clamp(0, 100);
+          changed = true;
+        }
+      }
+    }
+    if (changed) grid.revision++;
+  }
+
   // ── Bootstrap ──────────────────────────────────────────────────────────────
 
   /// Call this when user taps RESET or on cold boot with no saved map.
@@ -362,6 +391,8 @@ class SlamService {
 
   void resetMap() {
     _bootstrapTimer?.cancel();
+    _decayTimer?.cancel();
+    _decayTimer = null;
     grid.reset();
     pose = RobotPose();
     latestScan    = null;

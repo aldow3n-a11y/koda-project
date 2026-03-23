@@ -175,6 +175,9 @@ class AppSettings {
   /// Calibrate by pointing robot at a wall, noting the reported angle,
   /// then setting this offset so that angle reads 0°.
   final double lidarAngularOffset;
+  /// Time in seconds before unconfirmed occupied cells begin to decay.
+  /// 0 = never decay automatically.
+  final int lidarDecaySec;
 
   const AppSettings({
     this.apiKey = '',
@@ -193,6 +196,7 @@ class AppSettings {
     this.maxLoopIterations = 20,
     this.keepScreenAwake = true,
     this.lidarAngularOffset = 40.0,  // default from initial calibration
+    this.lidarDecaySec = 30,         // 30s before dots start to fade
   });
 
   AppSettings copyWith({
@@ -200,6 +204,7 @@ class AppSettings {
     bool? voiceEnabled, bool? memoryEnabled, bool? cloudSync, bool? devMode,
     String? bleDeviceName, int? bleWatchdogMs, int? maxTokens, int? llmCooldownMs,
     int? maxLoopIterations, bool? keepScreenAwake, double? lidarAngularOffset,
+    int? lidarDecaySec,
   }) =>
       AppSettings(
         apiKey: apiKey ?? this.apiKey,
@@ -218,6 +223,7 @@ class AppSettings {
         maxLoopIterations: maxLoopIterations ?? this.maxLoopIterations,
         keepScreenAwake: keepScreenAwake ?? this.keepScreenAwake,
         lidarAngularOffset: lidarAngularOffset ?? this.lidarAngularOffset,
+        lidarDecaySec: lidarDecaySec ?? this.lidarDecaySec,
       );
 
   Map<String, dynamic> toJson() => {
@@ -228,6 +234,7 @@ class AppSettings {
     'bleWatchdogMs': bleWatchdogMs, 'maxTokens': maxTokens,
     'llmCooldownMs': llmCooldownMs, 'maxLoopIterations': maxLoopIterations,
     'keepScreenAwake': keepScreenAwake, 'lidarAngularOffset': lidarAngularOffset,
+    'lidarDecaySec': lidarDecaySec,
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -247,6 +254,7 @@ class AppSettings {
     maxLoopIterations: j['maxLoopIterations'] ?? 20,
     keepScreenAwake: j['keepScreenAwake'] ?? true,
     lidarAngularOffset: (j['lidarAngularOffset'] as num?)?.toDouble() ?? 40.0,
+    lidarDecaySec: (j['lidarDecaySec'] as num?)?.toInt() ?? 30,
   );
 }
 

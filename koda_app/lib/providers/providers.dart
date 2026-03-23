@@ -71,6 +71,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       state = AppSettings.fromJson(jsonDecode(raw));
       // Sync loaded offset to LidarService immediately
       _ref.read(lidarServiceProvider).angularOffsetDeg = state.lidarAngularOffset;
+      // Sync decay timer
+      _ref.read(slamServiceProvider).setDecay(state.lidarDecaySec);
+    } else {
+      // Apply default decay even if no saved settings exist
+      _ref.read(slamServiceProvider).setDecay(state.lidarDecaySec);
     }
   }
 
@@ -80,6 +85,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     await prefs.setString('app_settings', jsonEncode(settings.toJson()));
     // Sync lidar offset live — user sees map update as they drag slider
     _ref.read(lidarServiceProvider).angularOffsetDeg = settings.lidarAngularOffset;
+    // Sync decay timer live
+    _ref.read(slamServiceProvider).setDecay(settings.lidarDecaySec);
   }
 
   Future<void> updateField(AppSettings Function(AppSettings) fn) async {
