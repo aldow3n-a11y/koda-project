@@ -41,7 +41,10 @@ class OccupancyGrid {
 
     _bresenham(x0, y0, x1, y1, (cx, cy) {
       if (cx == x1 && cy == y1) {
-        if (endIsObstacle) cells[cy][cx] = 100;
+        if (endIsObstacle) {
+          final v = cells[cy][cx];
+          cells[cy][cx] = v == -1 ? 25 : (v + 25).clamp(0, 100);
+        }
       } else {
         final v = cells[cy][cx];
         if (v == -1) {
@@ -121,6 +124,7 @@ class SlamService {
   double wheelbaseMm = 130.0;
   double mmPerSecAt100pct = 330.0;
   double turnCalibrationFactor = 1.0;
+  bool useImuHeading = false;
 
   static const int    _bootstrapSec     = 10;
   static const double _bootstrapMaxMoveMm  = 5.0;   // max allowed translation
@@ -339,6 +343,7 @@ class SlamService {
     if (durationMs <= 0 || speedPct <= 0) return;
     final dt  = durationMs / 1000.0;
     final spd = mmPerSecAt100pct * speedPct / 100.0;
+    
     switch (cmd) {
       case 'forward':
         pose.xMm += spd * dt * math.cos(pose.heading);
@@ -347,9 +352,13 @@ class SlamService {
         pose.xMm -= spd * dt * math.cos(pose.heading);
         pose.yMm -= spd * dt * math.sin(pose.heading);
       case 'turnCw':
-        pose.heading -= (spd / (wheelbaseMm / 2.0)) * dt * turnCalibrationFactor;
+        if (!useImuHeading) {
+          pose.heading -= (spd / (wheelbaseMm / 2.0)) * dt * turnCalibrationFactor;
+        }
       case 'turnCcw':
-        pose.heading += (spd / (wheelbaseMm / 2.0)) * dt * turnCalibrationFactor;
+        if (!useImuHeading) {
+          pose.heading += (spd / (wheelbaseMm / 2.0)) * dt * turnCalibrationFactor;
+        }
       default:
         break;
     }

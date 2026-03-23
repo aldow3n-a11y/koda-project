@@ -13,6 +13,7 @@ import '../services/context_service.dart';
 import '../services/skill_executor.dart';
 import '../services/lidar_service.dart';
 import '../services/slam_service.dart';
+import '../services/imu_service.dart';
 
 // ─── Camera Provider ──────────────────────────────────────────────────────────
 final cameraControllerProvider = StateProvider<CameraController?>((ref) => null);
@@ -37,6 +38,12 @@ final bleServiceProvider = Provider<BleService>((ref) {
   // Inject LidarService so BLE callbacks route to it
   s.lidarService = ref.read(lidarServiceProvider);
   ref.onDispose(s.dispose);
+  return s;
+});
+
+final imuServiceProvider = Provider<ImuService>((ref) {
+  final s = ImuService(ref.read(slamServiceProvider));
+  ref.onDispose(s.stop);
   return s;
 });
 
@@ -77,6 +84,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       slam.wheelbaseMm = state.wheelbaseMm;
       slam.mmPerSecAt100pct = state.mmPerSecAt100pct;
       slam.turnCalibrationFactor = state.turnCalibrationFactor;
+      slam.useImuHeading = state.useImuHeading;
+      
+      final imu = _ref.read(imuServiceProvider);
+      imu.invert = state.imuInvertTurn;
+      if (state.useImuHeading) imu.start(); else imu.stop();
     } else {
       // Apply default decay even if no saved settings exist
       final slam = _ref.read(slamServiceProvider);
@@ -84,6 +96,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       slam.wheelbaseMm = state.wheelbaseMm;
       slam.mmPerSecAt100pct = state.mmPerSecAt100pct;
       slam.turnCalibrationFactor = state.turnCalibrationFactor;
+      slam.useImuHeading = state.useImuHeading;
+      
+      final imu = _ref.read(imuServiceProvider);
+      imu.invert = state.imuInvertTurn;
+      if (state.useImuHeading) imu.start(); else imu.stop();
     }
   }
 
@@ -99,6 +116,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     slam.wheelbaseMm = settings.wheelbaseMm;
     slam.mmPerSecAt100pct = settings.mmPerSecAt100pct;
     slam.turnCalibrationFactor = settings.turnCalibrationFactor;
+    slam.useImuHeading = settings.useImuHeading;
+    
+    final imu = _ref.read(imuServiceProvider);
+    imu.invert = settings.imuInvertTurn;
+    if (settings.useImuHeading) imu.start(); else imu.stop();
   }
 
   Future<void> updateField(AppSettings Function(AppSettings) fn) async {

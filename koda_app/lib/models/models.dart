@@ -184,6 +184,10 @@ class AppSettings {
   final double mmPerSecAt100pct;
   /// Dead reckoning: Correction multiplier for rotation.
   final double turnCalibrationFactor;
+  /// IMU: Use phone IMU for heading rotation.
+  final bool useImuHeading;
+  /// IMU: Invert the calculated rotation.
+  final bool imuInvertTurn;
 
   const AppSettings({
     this.apiKey = '',
@@ -206,6 +210,8 @@ class AppSettings {
     this.wheelbaseMm = 130.0,
     this.mmPerSecAt100pct = 330.0,
     this.turnCalibrationFactor = 1.0,
+    this.useImuHeading = false,
+    this.imuInvertTurn = false,
   });
 
   AppSettings copyWith({
@@ -214,7 +220,7 @@ class AppSettings {
     String? bleDeviceName, int? bleWatchdogMs, int? maxTokens, int? llmCooldownMs,
     int? maxLoopIterations, bool? keepScreenAwake, double? lidarAngularOffset,
     int? lidarDecaySec, double? wheelbaseMm, double? mmPerSecAt100pct,
-    double? turnCalibrationFactor,
+    double? turnCalibrationFactor, bool? useImuHeading, bool? imuInvertTurn,
   }) =>
       AppSettings(
         apiKey: apiKey ?? this.apiKey,
@@ -237,6 +243,8 @@ class AppSettings {
         wheelbaseMm: wheelbaseMm ?? this.wheelbaseMm,
         mmPerSecAt100pct: mmPerSecAt100pct ?? this.mmPerSecAt100pct,
         turnCalibrationFactor: turnCalibrationFactor ?? this.turnCalibrationFactor,
+        useImuHeading: useImuHeading ?? this.useImuHeading,
+        imuInvertTurn: imuInvertTurn ?? this.imuInvertTurn,
       );
 
   Map<String, dynamic> toJson() => {
@@ -249,6 +257,7 @@ class AppSettings {
     'keepScreenAwake': keepScreenAwake, 'lidarAngularOffset': lidarAngularOffset,
     'lidarDecaySec': lidarDecaySec, 'wheelbaseMm': wheelbaseMm,
     'mmPerSecAt100pct': mmPerSecAt100pct, 'turnCalibrationFactor': turnCalibrationFactor,
+    'useImuHeading': useImuHeading, 'imuInvertTurn': imuInvertTurn,
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -272,6 +281,8 @@ class AppSettings {
     wheelbaseMm: (j['wheelbaseMm'] as num?)?.toDouble() ?? 130.0,
     mmPerSecAt100pct: (j['mmPerSecAt100pct'] as num?)?.toDouble() ?? 330.0,
     turnCalibrationFactor: (j['turnCalibrationFactor'] as num?)?.toDouble() ?? 1.0,
+    useImuHeading: j['useImuHeading'] ?? false,
+    imuInvertTurn: j['imuInvertTurn'] ?? false,
   );
 }
 

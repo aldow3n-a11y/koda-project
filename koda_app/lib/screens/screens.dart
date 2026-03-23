@@ -1547,6 +1547,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   activeColor: KodaColors.blue, inactiveColor: KodaColors.border,
                   onChanged: (v) => sN.updateField((s) => s.copyWith(turnCalibrationFactor: v)),
                 ),
+
+                const Divider(color: KodaColors.border, height: 24),
+                
+                // IMU Heading
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('PHONE IMU GYROSCOPE', style: monoStyle(size: 11, color: KodaColors.amber)),
+                          const SizedBox(height: 2),
+                          Text('Use phone hardware (Gyro+Accel sensor fusion) for true turning.', style: monoStyle(size: 9, color: KodaColors.dim)),
+                        ],
+                      ),
+                    ),
+                    Switch(
+                      value: s.useImuHeading,
+                      activeColor: KodaColors.amber,
+                      onChanged: (v) => sN.updateField((s) => s.copyWith(useImuHeading: v)),
+                    ),
+                  ],
+                ),
+                if (s.useImuHeading) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('INVERT TURN DIRECTION', style: monoStyle(size: 10, color: KodaColors.amber)),
+                      Switch(
+                        value: s.imuInvertTurn,
+                        activeColor: KodaColors.amber,
+                        onChanged: (v) => sN.updateField((s) => s.copyWith(imuInvertTurn: v)),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),
