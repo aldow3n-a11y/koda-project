@@ -72,10 +72,18 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       // Sync loaded offset to LidarService immediately
       _ref.read(lidarServiceProvider).angularOffsetDeg = state.lidarAngularOffset;
       // Sync decay timer
-      _ref.read(slamServiceProvider).setDecay(state.lidarDecaySec);
+      final slam = _ref.read(slamServiceProvider);
+      slam.setDecay(state.lidarDecaySec);
+      slam.wheelbaseMm = state.wheelbaseMm;
+      slam.mmPerSecAt100pct = state.mmPerSecAt100pct;
+      slam.turnCalibrationFactor = state.turnCalibrationFactor;
     } else {
       // Apply default decay even if no saved settings exist
-      _ref.read(slamServiceProvider).setDecay(state.lidarDecaySec);
+      final slam = _ref.read(slamServiceProvider);
+      slam.setDecay(state.lidarDecaySec);
+      slam.wheelbaseMm = state.wheelbaseMm;
+      slam.mmPerSecAt100pct = state.mmPerSecAt100pct;
+      slam.turnCalibrationFactor = state.turnCalibrationFactor;
     }
   }
 
@@ -86,7 +94,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     // Sync lidar offset live — user sees map update as they drag slider
     _ref.read(lidarServiceProvider).angularOffsetDeg = settings.lidarAngularOffset;
     // Sync decay timer live
-    _ref.read(slamServiceProvider).setDecay(settings.lidarDecaySec);
+    final slam = _ref.read(slamServiceProvider);
+    slam.setDecay(settings.lidarDecaySec);
+    slam.wheelbaseMm = settings.wheelbaseMm;
+    slam.mmPerSecAt100pct = settings.mmPerSecAt100pct;
+    slam.turnCalibrationFactor = settings.turnCalibrationFactor;
   }
 
   Future<void> updateField(AppSettings Function(AppSettings) fn) async {

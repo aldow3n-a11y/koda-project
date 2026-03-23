@@ -1491,6 +1491,65 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             );
           }),
+          const SizedBox(height: 12),
+
+          // ── Dead Reckoning Calibration ──────────────────────────────────
+          KodaCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('DEAD RECKONING', style: monoStyle(size: 11, color: KodaColors.amber, spacing: 2)),
+                const SizedBox(height: 6),
+                Text(
+                  'Physical calibration parameters for estimating robot movement from motor commands.',
+                  style: monoStyle(size: 10, color: KodaColors.sub),
+                ),
+                const SizedBox(height: 14),
+                
+                // Wheelbase
+                Row(
+                  children: [
+                    Text('WHEELBASE', style: monoStyle(size: 10, color: KodaColors.dim)),
+                    const Spacer(),
+                    Text('${s.wheelbaseMm.toStringAsFixed(1)} mm', style: monoStyle(size: 12, color: KodaColors.blue)),
+                  ],
+                ),
+                Slider(
+                  value: s.wheelbaseMm, min: 50, max: 250, divisions: 200,
+                  activeColor: KodaColors.blue, inactiveColor: KodaColors.border,
+                  onChanged: (v) => sN.updateField((s) => s.copyWith(wheelbaseMm: v)),
+                ),
+
+                // Speed Calibration
+                Row(
+                  children: [
+                    Text('100% SPEED =', style: monoStyle(size: 10, color: KodaColors.dim)),
+                    const Spacer(),
+                    Text('${s.mmPerSecAt100pct.toStringAsFixed(1)} mm/s', style: monoStyle(size: 12, color: KodaColors.blue)),
+                  ],
+                ),
+                Slider(
+                  value: s.mmPerSecAt100pct, min: 100, max: 600, divisions: 100,
+                  activeColor: KodaColors.blue, inactiveColor: KodaColors.border,
+                  onChanged: (v) => sN.updateField((s) => s.copyWith(mmPerSecAt100pct: v)),
+                ),
+
+                // Turn Factor
+                Row(
+                  children: [
+                    Text('TURN FACTOR', style: monoStyle(size: 10, color: KodaColors.dim)),
+                    const Spacer(),
+                    Text('${s.turnCalibrationFactor.toStringAsFixed(2)}x', style: monoStyle(size: 12, color: KodaColors.blue)),
+                  ],
+                ),
+                Slider(
+                  value: s.turnCalibrationFactor, min: 0.1, max: 2.5, divisions: 48,
+                  activeColor: KodaColors.blue, inactiveColor: KodaColors.border,
+                  onChanged: (v) => sN.updateField((s) => s.copyWith(turnCalibrationFactor: v)),
+                ),
+              ],
+            ),
+          ),
         ]);
 
       case 'context':

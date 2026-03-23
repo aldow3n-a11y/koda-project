@@ -117,8 +117,10 @@ enum SlamMode {
 // ─── SLAM Service ─────────────────────────────────────────────────────────────
 
 class SlamService {
-  static const double _wheelbaseMm      = 130.0;
-  static const double _mmPerSecAt100pct = 330.0;
+  double wheelbaseMm = 130.0;
+  double mmPerSecAt100pct = 330.0;
+  double turnCalibrationFactor = 1.0;
+
   static const int    _bootstrapSec     = 10;
   static const double _bootstrapMaxMoveMm  = 5.0;   // max allowed translation
   static const double _bootstrapMaxRotRad  = 0.035; // max allowed rotation (~2°)
@@ -319,7 +321,7 @@ class SlamService {
   }) {
     if (durationMs <= 0 || speedPct <= 0) return;
     final dt  = durationMs / 1000.0;
-    final spd = _mmPerSecAt100pct * speedPct / 100.0;
+    final spd = mmPerSecAt100pct * speedPct / 100.0;
     switch (cmd) {
       case 'forward':
         pose.xMm += spd * dt * math.cos(pose.heading);
@@ -328,9 +330,9 @@ class SlamService {
         pose.xMm -= spd * dt * math.cos(pose.heading);
         pose.yMm -= spd * dt * math.sin(pose.heading);
       case 'turnCw':
-        pose.heading -= (spd / (_wheelbaseMm / 2.0)) * dt;
+        pose.heading -= (spd / (wheelbaseMm / 2.0)) * dt * turnCalibrationFactor;
       case 'turnCcw':
-        pose.heading += (spd / (_wheelbaseMm / 2.0)) * dt;
+        pose.heading += (spd / (wheelbaseMm / 2.0)) * dt * turnCalibrationFactor;
       default:
         break;
     }

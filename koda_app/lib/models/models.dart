@@ -178,6 +178,12 @@ class AppSettings {
   /// Time in seconds before unconfirmed occupied cells begin to decay.
   /// 0 = never decay automatically.
   final int lidarDecaySec;
+  /// Dead reckoning: Physical wheelbase in mm.
+  final double wheelbaseMm;
+  /// Dead reckoning: Linear speed in mm/s when motor is at 100%.
+  final double mmPerSecAt100pct;
+  /// Dead reckoning: Correction multiplier for rotation.
+  final double turnCalibrationFactor;
 
   const AppSettings({
     this.apiKey = '',
@@ -197,6 +203,9 @@ class AppSettings {
     this.keepScreenAwake = true,
     this.lidarAngularOffset = 40.0,  // default from initial calibration
     this.lidarDecaySec = 30,         // 30s before dots start to fade
+    this.wheelbaseMm = 130.0,
+    this.mmPerSecAt100pct = 330.0,
+    this.turnCalibrationFactor = 1.0,
   });
 
   AppSettings copyWith({
@@ -204,7 +213,8 @@ class AppSettings {
     bool? voiceEnabled, bool? memoryEnabled, bool? cloudSync, bool? devMode,
     String? bleDeviceName, int? bleWatchdogMs, int? maxTokens, int? llmCooldownMs,
     int? maxLoopIterations, bool? keepScreenAwake, double? lidarAngularOffset,
-    int? lidarDecaySec,
+    int? lidarDecaySec, double? wheelbaseMm, double? mmPerSecAt100pct,
+    double? turnCalibrationFactor,
   }) =>
       AppSettings(
         apiKey: apiKey ?? this.apiKey,
@@ -224,6 +234,9 @@ class AppSettings {
         keepScreenAwake: keepScreenAwake ?? this.keepScreenAwake,
         lidarAngularOffset: lidarAngularOffset ?? this.lidarAngularOffset,
         lidarDecaySec: lidarDecaySec ?? this.lidarDecaySec,
+        wheelbaseMm: wheelbaseMm ?? this.wheelbaseMm,
+        mmPerSecAt100pct: mmPerSecAt100pct ?? this.mmPerSecAt100pct,
+        turnCalibrationFactor: turnCalibrationFactor ?? this.turnCalibrationFactor,
       );
 
   Map<String, dynamic> toJson() => {
@@ -234,7 +247,8 @@ class AppSettings {
     'bleWatchdogMs': bleWatchdogMs, 'maxTokens': maxTokens,
     'llmCooldownMs': llmCooldownMs, 'maxLoopIterations': maxLoopIterations,
     'keepScreenAwake': keepScreenAwake, 'lidarAngularOffset': lidarAngularOffset,
-    'lidarDecaySec': lidarDecaySec,
+    'lidarDecaySec': lidarDecaySec, 'wheelbaseMm': wheelbaseMm,
+    'mmPerSecAt100pct': mmPerSecAt100pct, 'turnCalibrationFactor': turnCalibrationFactor,
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -255,6 +269,9 @@ class AppSettings {
     keepScreenAwake: j['keepScreenAwake'] ?? true,
     lidarAngularOffset: (j['lidarAngularOffset'] as num?)?.toDouble() ?? 40.0,
     lidarDecaySec: (j['lidarDecaySec'] as num?)?.toInt() ?? 30,
+    wheelbaseMm: (j['wheelbaseMm'] as num?)?.toDouble() ?? 130.0,
+    mmPerSecAt100pct: (j['mmPerSecAt100pct'] as num?)?.toDouble() ?? 330.0,
+    turnCalibrationFactor: (j['turnCalibrationFactor'] as num?)?.toDouble() ?? 1.0,
   );
 }
 
