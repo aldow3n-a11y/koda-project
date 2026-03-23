@@ -270,8 +270,10 @@ class _BrainScreenState extends ConsumerState<BrainScreen> with WidgetsBindingOb
 
   @override
   Widget build(BuildContext context) {
-    final brain = ref.watch(brainProvider);
-    final ble   = ref.watch(bleConnectionProvider);
+    final brain  = ref.watch(brainProvider);
+    final ble    = ref.watch(bleConnectionProvider);
+    final lidar  = ref.watch(lidarProvider);
+    final slam   = ref.watch(slamServiceProvider);
     final notifier = ref.read(brainProvider.notifier);
 
     return Stack(
@@ -365,8 +367,20 @@ class _BrainScreenState extends ConsumerState<BrainScreen> with WidgetsBindingOb
                     _StatCard(label: 'API CALLS', value: '${brain.interactionCount}', color: KodaColors.green),
                   ],
                 ),
-                const SizedBox(height: 12),
               ],
+
+              const SizedBox(height: 12),
+
+              // LiDAR Map card — above camera preview
+              LidarMapCard(
+                slam:        slam,
+                isReceiving: lidar.isReceiving,
+                pointCount:  lidar.pointCount,
+                revision:    lidar.revision,
+                onReset: () => ref.read(lidarProvider.notifier).resetMap(),
+              ),
+
+              const SizedBox(height: 12),
 
               // Camera preview — fills card with BoxFit.cover (no stretch, no bars)
               if (_isCameraReady) ...[
@@ -629,6 +643,8 @@ class JoystickScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final ble   = ref.watch(bleConnectionProvider);
     final speed = ref.watch(remoteSpeedProvider);
+    final lidar = ref.watch(lidarProvider);
+    final slam  = ref.watch(slamServiceProvider);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -657,6 +673,16 @@ class JoystickScreen extends ConsumerWidget {
                 ),
               ],
             ),
+          ),
+          const SizedBox(height: 12),
+
+          // LiDAR Map card — above D-pad
+          LidarMapCard(
+            slam:        slam,
+            isReceiving: lidar.isReceiving,
+            pointCount:  lidar.pointCount,
+            revision:    lidar.revision,
+            onReset: () => ref.read(lidarProvider.notifier).resetMap(),
           ),
           const SizedBox(height: 12),
 
@@ -992,27 +1018,41 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           _SettingsTile(
             label: 'Model',
-            sub: 'Haiku recommended for speed + cost',
+            sub: '2026 Cloud Vision models supported',
             child: DropdownButtonFormField<String>(
-              initialValue: s.model,
+              value: s.model,
               dropdownColor: KodaColors.panel2,
               style: monoStyle(size: 11, color: KodaColors.text),
               decoration: const InputDecoration(),
               items: const [
+                DropdownMenuItem(value: 'qwen3.5',
+                    child: Text('Qwen 3.5 — Cloud Vision')),
+                DropdownMenuItem(value: 'kimi-k2.5',
+                    child: Text('Kimi K2.5 — Cloud Vision')),
+                DropdownMenuItem(value: 'devstral-small-2',
+                    child: Text('Devstral Small 2 — Cloud Vision')),
+                DropdownMenuItem(value: 'ministral-3',
+                    child: Text('Ministral 3 — Cloud Vision')),
                 DropdownMenuItem(value: 'claude-haiku-4-5-20251001',
                     child: Text('Haiku 4.5 — Fast')),
                 DropdownMenuItem(value: 'claude-sonnet-4-6',
                     child: Text('Sonnet 4.6 — Balanced')),
-                DropdownMenuItem(value: 'claude-opus-4-6',
-                    child: Text('Opus 4.6 — Smart')),
                 DropdownMenuItem(value: 'gemini-2.0-flash',
                     child: Text('Gemini 2.0 Flash')),
-                DropdownMenuItem(value: 'gemini-2.5-flash',
-                    child: Text('Gemini 2.5 Flash')),
-                DropdownMenuItem(value: 'gemini-3-flash',
-                    child: Text('Gemini 3 Flash — Experimental')),
               ],
               onChanged: (v) => sN.updateField((s) => s.copyWith(model: v)),
+            ),
+          ),
+          _SettingsTile(
+            label: 'API URL',
+            sub: 'Custom endpoint (leave empty for native)',
+            child: TextFormField(
+              initialValue: s.customApiUrl,
+              style: monoStyle(size: 12, color: KodaColors.text),
+              decoration: const InputDecoration(
+                hintText: 'https://api.example.com/v1/chat/completions',
+              ),
+              onChanged: (v) => sN.updateField((s) => s.copyWith(customApiUrl: v)),
             ),
           ),
             _SliderTile(

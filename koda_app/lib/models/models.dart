@@ -169,11 +169,13 @@ class AppSettings {
   final int maxTokens;
   final int llmCooldownMs;
   final int maxLoopIterations;
+  final String customApiUrl;
   final bool keepScreenAwake;
 
   const AppSettings({
     this.apiKey = '',
     this.model = 'claude-haiku-4-5-20251001',
+    this.customApiUrl = '',
     this.ttsVoice = 'en-US',
     this.wakeWord = 'Hey Koda',
     this.voiceEnabled = true,
@@ -189,7 +191,7 @@ class AppSettings {
   });
 
   AppSettings copyWith({
-    String? apiKey, String? model, String? ttsVoice, String? wakeWord,
+    String? apiKey, String? model, String? customApiUrl, String? ttsVoice, String? wakeWord,
     bool? voiceEnabled, bool? memoryEnabled, bool? cloudSync, bool? devMode,
     String? bleDeviceName, int? bleWatchdogMs, int? maxTokens, int? llmCooldownMs,
     int? maxLoopIterations, bool? keepScreenAwake,
@@ -197,6 +199,7 @@ class AppSettings {
       AppSettings(
         apiKey: apiKey ?? this.apiKey,
         model: model ?? this.model,
+        customApiUrl: customApiUrl ?? this.customApiUrl,
         ttsVoice: ttsVoice ?? this.ttsVoice,
         wakeWord: wakeWord ?? this.wakeWord,
         voiceEnabled: voiceEnabled ?? this.voiceEnabled,
@@ -212,7 +215,7 @@ class AppSettings {
       );
 
   Map<String, dynamic> toJson() => {
-    'apiKey': apiKey, 'model': model, 'ttsVoice': ttsVoice,
+    'apiKey': apiKey, 'model': model, 'customApiUrl': customApiUrl, 'ttsVoice': ttsVoice,
     'wakeWord': wakeWord, 'voiceEnabled': voiceEnabled,
     'memoryEnabled': memoryEnabled, 'cloudSync': cloudSync,
     'devMode': devMode, 'bleDeviceName': bleDeviceName,
@@ -224,6 +227,7 @@ class AppSettings {
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
     apiKey: j['apiKey'] ?? '',
     model: j['model'] ?? 'claude-haiku-4-5-20251001',
+    customApiUrl: j['customApiUrl'] ?? '',
     ttsVoice: j['ttsVoice'] ?? 'en-US',
     wakeWord: j['wakeWord'] ?? 'Hey Koda',
     voiceEnabled: j['voiceEnabled'] ?? true,

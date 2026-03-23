@@ -4,6 +4,7 @@ import '../models/models.dart';
 import '../providers/providers.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 export 'robot_face.dart';
+export 'map_painter.dart';
 
 // ─── KodaCard ─────────────────────────────────────────────────────────────────
 class KodaCard extends StatelessWidget {

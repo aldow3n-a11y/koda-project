@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import '../models/models.dart';
+import 'lidar_service.dart';
 
 // GATT UUIDs — must match ESP32 firmware
 const kServiceUuid     = '12345678-1234-1234-1234-123456789012';
 const kCmdCharUuid     = '12345678-1234-1234-1234-123456789013';
 const kStatusCharUuid  = '12345678-1234-1234-1234-123456789014';
+const kLidarCharUuid   = '12345678-1234-1234-1234-123456789015';
 
 enum BleStatus { idle, scanning, connecting, connected, disconnected, error }
 
@@ -14,8 +16,12 @@ class BleService {
   BluetoothDevice? _device;
   BluetoothCharacteristic? _cmdChar;
   BluetoothCharacteristic? _statusChar;
+  BluetoothCharacteristic? _lidarChar;
   StreamSubscription? _connectionSub;
   Timer? _watchdogTimer;
+
+  // Injected LidarService — set by the provider after construction
+  LidarService? lidarService;
 
   final _statusController     = StreamController<BleStatus>.broadcast();
   final _devicesController    = StreamController<List<KodaBtDevice>>.broadcast();
@@ -96,6 +102,7 @@ class BleService {
           for (final c in s.characteristics) {
             if (c.uuid.toString() == kCmdCharUuid)    _cmdChar    = c;
             if (c.uuid.toString() == kStatusCharUuid) _statusChar = c;
+            if (c.uuid.toString() == kLidarCharUuid)  _lidarChar  = c;
           }
         }
       }
@@ -106,6 +113,17 @@ class BleService {
         _statusChar!.onValueReceived.listen((data) {
           _log('ESP32 status: ${utf8.decode(data)}');
         });
+      }
+
+      // Subscribe to LiDAR scan notifications
+      if (_lidarChar != null) {
+        await _lidarChar!.setNotifyValue(true);
+        _lidarChar!.onValueReceived.listen((data) {
+          lidarService?.onBleBytes(data);
+        });
+        _log('LiDAR characteristic subscribed.');
+      } else {
+        _log('LiDAR characteristic not found — check ESP32 firmware.');
       }
 
       // Watch for disconnection

@@ -8,12 +8,14 @@ class LlmService {
 
   String _apiKey = '';
   String _model  = 'gemini-2.0-flash';
+  String _customApiUrl = '';
   int _maxTokens = 300;
 
-  void configure({required String apiKey, String? model, int? maxTokens}) {
+  void configure({required String apiKey, String? model, int? maxTokens, String? customApiUrl}) {
     _apiKey    = apiKey;
     _model     = model ?? _model;
     _maxTokens = maxTokens ?? _maxTokens;
+    _customApiUrl = customApiUrl ?? _customApiUrl;
   }
 
   // ── Main chat call ────────────────────────────────────────────────────────
@@ -24,7 +26,7 @@ class LlmService {
     List<int>? imageBytes,
     String? visionContext,
   }) async {
-    if (_apiKey.isEmpty) return null;
+    if (_apiKey.isEmpty && _customApiUrl.isEmpty) return null;
 
     final userContent = visionContext != null
         ? '$userMessage\n\nCamera context: $visionContext'
@@ -47,7 +49,7 @@ class LlmService {
 
   // ── Raw plain-text call (used for memory extraction from session logs) ────
   Future<String?> callRaw(String prompt, {int maxTokens = 400}) async {
-    if (_apiKey.isEmpty) return null;
+    if (_apiKey.isEmpty && _customApiUrl.isEmpty) return null;
     return _call(systemPrompt: '', userContent: prompt, maxTokens: maxTokens);
   }
 
@@ -60,7 +62,50 @@ class LlmService {
   }) async {
     try {
       http.Response res;
-      if (_model.startsWith('gemini')) {
+      
+      // 1. Custom / Cloud API (Standardized OpenAI-like)
+      if (_customApiUrl.isNotEmpty) {
+        final headers = {
+          'Content-Type': 'application/json',
+          if (_apiKey.isNotEmpty) 'Authorization': 'Bearer $_apiKey',
+        };
+
+        final messages = <Map<String, dynamic>>[];
+        if (systemPrompt.isNotEmpty) {
+          messages.add({'role': 'system', 'content': systemPrompt});
+        }
+
+        if (imageBytes != null) {
+          // Standard OpenAI vision format
+          messages.add({
+            'role': 'user',
+            'content': [
+              {'type': 'text', 'text': userContent},
+              {
+                'type': 'image_url',
+                'image_url': {
+                  'url': 'data:image/jpeg;base64,${base64Encode(imageBytes)}'
+                }
+              },
+            ]
+          });
+        } else {
+          messages.add({'role': 'user', 'content': userContent});
+        }
+
+        res = await http.post(
+          Uri.parse(_customApiUrl),
+          headers: headers,
+          body: jsonEncode({
+            'model': _model,
+            'messages': messages,
+            'max_tokens': maxTokens,
+          }),
+        ).timeout(const Duration(seconds: 45));
+
+      } 
+      // 2. Gemini native
+      else if (_model.startsWith('gemini')) {
         final parts = <Map<String, dynamic>>[];
         if (imageBytes != null) {
           parts.add({
@@ -85,7 +130,9 @@ class LlmService {
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(body),
         ).timeout(const Duration(seconds: 30));
-      } else {
+      } 
+      // 3. Anthropic native
+      else {
         res = await http.post(
           Uri.parse(_apiUrl),
           headers: {
@@ -106,7 +153,10 @@ class LlmService {
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
-        if (_model.startsWith('gemini')) {
+        if (_customApiUrl.isNotEmpty) {
+          // Both OpenAI and Ollama (standard chat) use this path
+          return data['choices'][0]['message']['content'] as String;
+        } else if (_model.startsWith('gemini')) {
           return data['candidates'][0]['content']['parts'][0]['text'] as String;
         } else {
           return data['content'][0]['text'] as String;

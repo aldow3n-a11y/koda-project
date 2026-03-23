@@ -11,6 +11,8 @@ import '../services/llm_service.dart';
 import '../services/voice_service.dart';
 import '../services/context_service.dart';
 import '../services/skill_executor.dart';
+import '../services/lidar_service.dart';
+import '../services/slam_service.dart';
 
 // ─── Camera Provider ──────────────────────────────────────────────────────────
 final cameraControllerProvider = StateProvider<CameraController?>((ref) => null);
@@ -19,8 +21,18 @@ final cameraControllerProvider = StateProvider<CameraController?>((ref) => null)
 final remoteSpeedProvider = StateProvider<int>((ref) => 60);
 
 // ─── Services (singletons) ────────────────────────────────────────────────────
+final lidarServiceProvider = Provider<LidarService>((ref) {
+  final s = LidarService();
+  ref.onDispose(s.dispose);
+  return s;
+});
+
+final slamServiceProvider = Provider<SlamService>((ref) => SlamService());
+
 final bleServiceProvider = Provider<BleService>((ref) {
   final s = BleService();
+  // Inject LidarService so BLE callbacks route to it
+  s.lidarService = ref.read(lidarServiceProvider);
   ref.onDispose(s.dispose);
   return s;
 });
@@ -179,6 +191,87 @@ final bleConnectionProvider =
   return BleConnectionNotifier(ref.watch(bleServiceProvider));
 });
 
+// ─── LiDAR + SLAM Provider ────────────────────────────────────────────────────
+
+class LidarState {
+  final bool     isReceiving;
+  final int      pointCount;
+  final int      revision;  // increments on each new scan — drives repaint
+  final double?  nearestMm;
+  final double?  nearestAngleDeg;
+
+  const LidarState({
+    this.isReceiving    = false,
+    this.pointCount     = 0,
+    this.revision       = 0,
+    this.nearestMm,
+    this.nearestAngleDeg,
+  });
+
+  LidarState copyWith({
+    bool?   isReceiving,
+    int?    pointCount,
+    int?    revision,
+    double? nearestMm,
+    double? nearestAngleDeg,
+  }) => LidarState(
+    isReceiving:    isReceiving    ?? this.isReceiving,
+    pointCount:     pointCount     ?? this.pointCount,
+    revision:       revision       ?? this.revision,
+    nearestMm:      nearestMm      ?? this.nearestMm,
+    nearestAngleDeg: nearestAngleDeg ?? this.nearestAngleDeg,
+  );
+}
+
+class LidarNotifier extends StateNotifier<LidarState> {
+  final LidarService  _lidar;
+  final SlamService   _slam;
+  StreamSubscription? _scanSub;
+
+  LidarNotifier(this._lidar, this._slam) : super(const LidarState()) {
+    _scanSub = _lidar.scanStream.listen(_onScan);
+  }
+
+  void _onScan(LidarScan scan) {
+    _slam.integrateScan(scan);
+    state = state.copyWith(
+      isReceiving:     true,
+      pointCount:      scan.pointCount,
+      revision:        state.revision + 1,
+      nearestMm:       scan.nearestDistanceMm,
+      nearestAngleDeg: scan.nearestAngleDeg,
+    );
+  }
+
+  /// Called by BrainNotifier/SkillExecutor when a motor command is sent,
+  /// so the SLAM dead-reckoning stays in sync.
+  void notifyMotorCommand(String cmd, int speedPct, int durationMs) {
+    _slam.updatePoseFromCommand(
+      cmd: cmd, speedPct: speedPct, durationMs: durationMs,
+    );
+  }
+
+  void resetMap() {
+    _slam.resetMap();
+    _lidar.reset();
+    state = const LidarState();
+  }
+
+  @override
+  void dispose() {
+    _scanSub?.cancel();
+    super.dispose();
+  }
+}
+
+final lidarProvider =
+    StateNotifierProvider<LidarNotifier, LidarState>((ref) {
+  return LidarNotifier(
+    ref.watch(lidarServiceProvider),
+    ref.watch(slamServiceProvider),
+  );
+});
+
 // ─── Brain Mode Provider ──────────────────────────────────────────────────────
 enum BrainStatus { idle, listening, thinking, executing, speaking }
 
@@ -265,6 +358,10 @@ class BrainNotifier extends StateNotifier<BrainState> {
     _skillExecutor = SkillExecutor(
       onBle: (cmd, speed, ms) async {
         await _bleNotifier.sendCommand(MotorCommand(cmd: cmd, speed: speed, ms: ms));
+        // Notify SLAM dead-reckoning of movement
+        _ref.read(lidarProvider.notifier).notifyMotorCommand(
+          cmd.name, speed, ms,
+        );
         if (ms > 0) await Future.delayed(Duration(milliseconds: ms + 80));
       },
       onSpeak: (text) => _tts.speak(text),
@@ -301,6 +398,7 @@ class BrainNotifier extends StateNotifier<BrainState> {
     _llm.configure(
       apiKey: settings.apiKey,
       model: settings.model,
+      customApiUrl: settings.customApiUrl,
       maxTokens: settings.maxTokens,
     );
 
@@ -447,9 +545,21 @@ class BrainNotifier extends StateNotifier<BrainState> {
     
     final fullHistory = '$_recentHistoryStr\n$historyStr'.trim();
     
-    final dynamicSystemPrompt = fullHistory.isEmpty 
+    String dynamicSystemPrompt = fullHistory.isEmpty 
         ? _systemPrompt 
         : '$_systemPrompt\n\n### RECENT CONVERSATION HISTORY\n$fullHistory\n\n(Use this history for conversational context across tasks. Do not repeat yourself.)';
+
+    // Append live LiDAR obstacle data to prompt if sensor is active
+    final lidarState = _ref.read(lidarProvider);
+    if (lidarState.isReceiving && lidarState.nearestMm != null) {
+      final distCm  = (lidarState.nearestMm! / 10).round();
+      final angleDeg = lidarState.nearestAngleDeg?.toStringAsFixed(0) ?? '?';
+      dynamicSystemPrompt +=
+          '\n\n### LIVE OBSTACLE SENSOR\n'
+          'Nearest obstacle: ${distCm}cm at ${angleDeg}° '
+          '(0°=forward, 90°=right, 180°=behind, 270°=left)\n'
+          'Use this to avoid collisions and make spatial decisions.';
+    }
 
     // Enforce LLM request cooldown to prevent rate limiting
     final cooldownMs = _ref.read(settingsProvider).llmCooldownMs;

@@ -296,7 +296,7 @@ void loop() {
                     lidarChar->setValue(chunk, chunkIdx);
                     lidarChar->notify();
                     chunkIdx = 0;
-                    delay(30); // increased from 10 to prevent BLE MTU drops
+                    delay(10);
                 }
             }
             if (chunkIdx > 0) {
