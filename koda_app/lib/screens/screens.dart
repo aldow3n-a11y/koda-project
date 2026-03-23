@@ -1407,8 +1407,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 Slider(
                   value: s.lidarDecaySec.toDouble(),
                   min: 0,
-                  max: 300,
-                  divisions: 30,
+                  max: 60,
+                  divisions: 60,
                   activeColor: KodaColors.blue,
                   inactiveColor: KodaColors.border,
                   onChanged: (v) => sN.updateField(
@@ -1420,7 +1420,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   children: [
                     Text('Never', style: monoStyle(size: 9, color: KodaColors.dim)),
                     Text('30s', style: monoStyle(size: 9, color: KodaColors.dim)),
-                    Text('5min', style: monoStyle(size: 9, color: KodaColors.dim)),
+                    Text('60s', style: monoStyle(size: 9, color: KodaColors.dim)),
                   ],
                 ),
               ],
