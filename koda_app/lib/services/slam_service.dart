@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:convert';
 import 'package:path_provider/path_provider.dart';
 import 'lidar_service.dart';
 import 'icp_matcher.dart';
@@ -371,7 +372,22 @@ class SlamService {
   Future<bool> saveMap({String name = 'default'}) async {
     try {
       final file = await _mapFile(name);
-      await file.writeAsBytes(grid.toBytes());
+      final rawBytes = grid.toBytes();
+      final compressed = zlib.encode(rawBytes);
+      
+      final mapData = {
+        'version': 2,
+        'gridSize': kGridSize,
+        'cellSizeMm': kCellSizeMm,
+        'pose': {
+          'xMm': pose.xMm,
+          'yMm': pose.yMm,
+          'heading': pose.heading,
+        },
+        'dataBase64': base64Encode(compressed),
+      };
+
+      await file.writeAsString(jsonEncode(mapData));
       return true;
     } catch (_) {
       return false;
@@ -384,8 +400,35 @@ class SlamService {
     try {
       final file = await _mapFile(name);
       if (!await file.exists()) return false;
-      final bytes = await file.readAsBytes();
-      grid.fromBytes(bytes as Uint8List);
+      
+      final contentBytes = await file.readAsBytes();
+      
+      try {
+        // Try parsing as V2 JSON
+        final contentString = utf8.decode(contentBytes);
+        final mapData = jsonDecode(contentString) as Map<String, dynamic>;
+        
+        if (mapData['version'] == 2) {
+          final b64 = mapData['dataBase64'] as String;
+          final compressed = base64Decode(b64);
+          final rawBytes = zlib.decode(compressed) as Uint8List;
+          
+          grid.fromBytes(rawBytes);
+          
+          final poseData = mapData['pose'] as Map<String, dynamic>?;
+          if (poseData != null) {
+            pose.xMm = (poseData['xMm'] as num).toDouble();
+            pose.yMm = (poseData['yMm'] as num).toDouble();
+            pose.heading = (poseData['heading'] as num).toDouble();
+          }
+        } else {
+          throw const FormatException('Unsupported map version');
+        }
+      } catch (_) {
+        // Fallback to V1 Raw Binary
+        grid.fromBytes(contentBytes);
+      }
+
       _mode = SlamMode.navigation;
       _lastScanPose = pose.copy();
       onStateChange?.call(_mode, 0);
