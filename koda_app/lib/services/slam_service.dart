@@ -43,14 +43,14 @@ class OccupancyGrid {
       if (cx == x1 && cy == y1) {
         if (endIsObstacle) {
           final v = cells[cy][cx];
-          cells[cy][cx] = v == -1 ? 25 : (v + 25).clamp(0, 100);
+          cells[cy][cx] = v == -1 ? 25 : (v + 25).clamp(0, 250);
         }
       } else {
         final v = cells[cy][cx];
         if (v == -1) {
           cells[cy][cx] = 0;
         } else if (v > 0) {
-          cells[cy][cx] = (v - 25).clamp(0, 100);
+          cells[cy][cx] = (v - 25).clamp(0, 250);
         }
       }
     });

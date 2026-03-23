@@ -170,32 +170,65 @@ class IcpMatcher {
         final minY = math.max(0, cy - searchRadiusCells);
         final maxY = math.min(gridSize - 1, cy + searchRadiusCells);
 
+        double minAnchorDistSq = double.infinity;
+        int bestAnchorX = -1;
+        int bestAnchorY = -1;
+        
+        double minOccDistSq = double.infinity;
+        int bestOccX = -1;
+        int bestOccY = -1;
+
         for (int y = minY; y <= maxY; y++) {
           for (int x = minX; x <= maxX; x++) {
-            if (cells[y][x] >= 50) {
-              // Convert cell back to world coordinate (center of cell)
+            final v = cells[y][x];
+            if (v >= 50) {
               final cellWorldX = (x - origin) * cellSize.toDouble();
               final cellWorldY = (y - origin) * cellSize.toDouble();
-              
               final dx = cellWorldX - wX;
               final dy = cellWorldY - wY;
-              final distSq = dx * dx + dy * dy;
+              final dSq = dx * dx + dy * dy;
 
-              if (distSq < minDistSq) {
-                minDistSq = distSq;
-                bestCx = x;
-                bestCy = y;
+              if (v >= 200) { // High confidence anchor
+                if (dSq < minAnchorDistSq) {
+                  minAnchorDistSq = dSq;
+                  bestAnchorX = x;
+                  bestAnchorY = y;
+                }
+              } else { // Normal occupancy
+                if (dSq < minOccDistSq) {
+                  minOccDistSq = dSq;
+                  bestOccX = x;
+                  bestOccY = y;
+                }
               }
             }
           }
         }
 
-        if (bestCx != -1 && minDistSq < _maxPointDistMm * _maxPointDistMm) {
+        // Priority: Match to anchor if available, else match to occupancy
+        bool hasMatch = false;
+        double matchDistSq = double.infinity;
+        int matchX = -1;
+        int matchY = -1;
+
+        if (bestAnchorX != -1) {
+          hasMatch = true;
+          matchDistSq = minAnchorDistSq;
+          matchX = bestAnchorX;
+          matchY = bestAnchorY;
+        } else if (bestOccX != -1) {
+          hasMatch = true;
+          matchDistSq = minOccDistSq;
+          matchX = bestOccX;
+          matchY = bestOccY;
+        }
+
+        if (hasMatch && matchDistSq < _maxPointDistMm * _maxPointDistMm) {
           // Add raw local source point
           matchedSource.add(s);
           // Calculate where the target point is in the robot's local frame
-          final tWorldX = (bestCx - origin) * cellSize.toDouble();
-          final tWorldY = (bestCy - origin) * cellSize.toDouble();
+          final tWorldX = (matchX - origin) * cellSize.toDouble();
+          final tWorldY = (matchY - origin) * cellSize.toDouble();
           
           final dWorldX = tWorldX - initialX;
           final dWorldY = tWorldY - initialY;
