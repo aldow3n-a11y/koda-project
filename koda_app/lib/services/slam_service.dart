@@ -272,25 +272,41 @@ class SlamService {
       final rotatedRad = dWorldH.abs();
 
       if (movedMm > 20.0 || rotatedRad > 0.05) {
-        final lh          = _lastScanPose!.heading;
-        final odomLocalX  = dWorldX * math.cos(-lh) - dWorldY * math.sin(-lh);
-        final odomLocalY  = dWorldX * math.sin(-lh) + dWorldY * math.cos(-lh);
-
-        final icp = IcpMatcher.match(
+        final icp = IcpMatcher.matchToGrid(
           source: scan,
-          target: latestScan!,
-          initialDx: odomLocalX,
-          initialDy: odomLocalY,
-          initialDTheta: dWorldH,
+          initialX: pose.xMm,
+          initialY: pose.yMm,
+          initialHeading: pose.heading,
+          grid: grid,
         );
 
         if (icp.success) {
-          final wDx = icp.dxMm * math.cos(lh) - icp.dyMm * math.sin(lh);
-          final wDy = icp.dxMm * math.sin(lh) + icp.dyMm * math.cos(lh);
-          pose.xMm    = _lastScanPose!.xMm + wDx;
-          pose.yMm    = _lastScanPose!.yMm + wDy;
-          pose.heading = _lastScanPose!.heading + icp.dThetaRad;
+          pose.xMm += icp.dxMm;
+          pose.yMm += icp.dyMm;
+          pose.heading += icp.dThetaRad;
           pose.heading = (pose.heading + math.pi) % (2 * math.pi) - math.pi;
+        } else {
+          // Fallback to frame-to-frame ICP if grid matching fails (e.g. sparse map)
+          final lh          = _lastScanPose!.heading;
+          final odomLocalX  = dWorldX * math.cos(-lh) - dWorldY * math.sin(-lh);
+          final odomLocalY  = dWorldX * math.sin(-lh) + dWorldY * math.cos(-lh);
+
+          final fallbackIcp = IcpMatcher.match(
+            source: scan,
+            target: latestScan!,
+            initialDx: odomLocalX,
+            initialDy: odomLocalY,
+            initialDTheta: dWorldH,
+          );
+
+          if (fallbackIcp.success) {
+            final wDx = fallbackIcp.dxMm * math.cos(lh) - fallbackIcp.dyMm * math.sin(lh);
+            final wDy = fallbackIcp.dxMm * math.sin(lh) + fallbackIcp.dyMm * math.cos(lh);
+            pose.xMm    = _lastScanPose!.xMm + wDx;
+            pose.yMm    = _lastScanPose!.yMm + wDy;
+            pose.heading = _lastScanPose!.heading + fallbackIcp.dThetaRad;
+            pose.heading = (pose.heading + math.pi) % (2 * math.pi) - math.pi;
+          }
         }
       }
     }

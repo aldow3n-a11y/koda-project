@@ -113,6 +113,151 @@ class IcpMatcher {
     return IcpTransform(totalDx, totalDy, totalDTheta, true);
   }
 
+  /// Runs ICP to align a single laser scan against the OccupancyGrid map.
+  /// Treats cells with value >= 50 as target obstacles.
+  /// Returns the correction (dx, dy, dtheta) to apply to initialPose.
+  static IcpTransform matchToGrid({
+    required LidarScan source,
+    required double initialX,
+    required double initialY,
+    required double initialHeading,
+    required dynamic grid, // OccupancyGrid
+  }) {
+    var sourcePts = _toCartesian(source);
+    if (sourcePts.length < 10) return const IcpTransform(0, 0, 0, false);
+
+    // Initial guess is already applied in the transform loop, so we track deviations from the initial pose.
+    double totalDx = 0.0;
+    double totalDy = 0.0;
+    double totalDTheta = 0.0;
+
+    double lastError = double.infinity;
+    const int searchRadiusCells = 8; // 8 * 50mm = 400mm search radius
+
+    // Cache the cell access constants
+    const int cellSize = 50; // kCellSizeMm
+    const int origin = 150; // kOriginCell
+    const int gridSize = 300; // kGridSize
+    final cells = grid.cells as List<List<int>>;
+
+    for (int iter = 0; iter < 10; iter++) { // maxIterations
+      final matchedSource = <Offset>[];
+      final matchedTarget = <Offset>[];
+      double currentError = 0;
+
+      final currentH = initialHeading + totalDTheta;
+      final currentX = initialX + totalDx;
+      final currentY = initialY + totalDy;
+
+      final cosH = math.cos(currentH);
+      final sinH = math.sin(currentH);
+
+      for (final s in sourcePts) {
+        // Transform local scan point to world coordinate given current pose estimate
+        final wX = currentX + s.dx * cosH - s.dy * sinH;
+        final wY = currentY + s.dx * sinH + s.dy * cosH;
+
+        final cx = (origin + wX / cellSize).round().clamp(0, gridSize - 1);
+        final cy = (origin + wY / cellSize).round().clamp(0, gridSize - 1);
+
+        double minDistSq = double.infinity;
+        int bestCx = -1;
+        int bestCy = -1;
+
+        // Search local neighborhood in the grid for nearest occupied cell
+        final minX = math.max(0, cx - searchRadiusCells);
+        final maxX = math.min(gridSize - 1, cx + searchRadiusCells);
+        final minY = math.max(0, cy - searchRadiusCells);
+        final maxY = math.min(gridSize - 1, cy + searchRadiusCells);
+
+        for (int y = minY; y <= maxY; y++) {
+          for (int x = minX; x <= maxX; x++) {
+            if (cells[y][x] >= 50) {
+              // Convert cell back to world coordinate (center of cell)
+              final cellWorldX = (x - origin) * cellSize.toDouble();
+              final cellWorldY = (y - origin) * cellSize.toDouble();
+              
+              final dx = cellWorldX - wX;
+              final dy = cellWorldY - wY;
+              final distSq = dx * dx + dy * dy;
+
+              if (distSq < minDistSq) {
+                minDistSq = distSq;
+                bestCx = x;
+                bestCy = y;
+              }
+            }
+          }
+        }
+
+        if (bestCx != -1 && minDistSq < _maxPointDistMm * _maxPointDistMm) {
+          // Add raw local source point
+          matchedSource.add(s);
+          // Calculate where the target point is in the robot's local frame
+          final tWorldX = (bestCx - origin) * cellSize.toDouble();
+          final tWorldY = (bestCy - origin) * cellSize.toDouble();
+          
+          final dWorldX = tWorldX - initialX;
+          final dWorldY = tWorldY - initialY;
+          
+          // Target point translated back to robot's local origin (using INITIAL heading for base frame)
+          final initialCos = math.cos(-initialHeading);
+          final initialSin = math.sin(-initialHeading);
+          
+          final tLocalX = dWorldX * initialCos - dWorldY * initialSin;
+          final tLocalY = dWorldX * initialSin + dWorldY * initialCos;
+
+          matchedTarget.add(Offset(tLocalX, tLocalY));
+          currentError += math.sqrt(minDistSq);
+        }
+      }
+
+      if (matchedSource.length < 10) break;
+      currentError /= matchedSource.length;
+
+      if ((lastError - currentError).abs() < _minErrorDelta) break;
+      lastError = currentError;
+
+      // Calculate SVD/least-squares transform from matchedSource -> matchedTarget
+      double cxS = 0, cyS = 0, cxT = 0, cyT = 0;
+      final len = matchedSource.length;
+      for (int i = 0; i < len; i++) {
+        cxS += matchedSource[i].dx;
+        cyS += matchedSource[i].dy;
+        cxT += matchedTarget[i].dx;
+        cyT += matchedTarget[i].dy;
+      }
+      cxS /= len; cyS /= len;
+      cxT /= len; cyT /= len;
+
+      double sxx = 0, sxy = 0, syx = 0, syy = 0;
+      for (int i = 0; i < len; i++) {
+        final psX = matchedSource[i].dx - cxS;
+        final psY = matchedSource[i].dy - cyS;
+        final ptX = matchedTarget[i].dx - cxT;
+        final ptY = matchedTarget[i].dy - cyT;
+
+        sxx += psX * ptX;
+        sxy += psX * ptY;
+        syx += psY * ptX;
+        syy += psY * ptY;
+      }
+
+      final dTheta = math.atan2(sxy - syx, sxx + syy);
+      final dxLocal = cxT - (cxS * math.cos(dTheta) - cyS * math.sin(dTheta));
+      final dyLocal = cyT - (cxS * math.sin(dTheta) + cyS * math.cos(dTheta));
+
+      // We apply this local correction to the overall transform estimate
+      // Since matchedTarget is relative to initialPose, the resulting (dx, dy, dtheta) 
+      // is the total cumulative correction to apply to initialPose.
+      totalDx = dxLocal * math.cos(initialHeading) - dyLocal * math.sin(initialHeading);
+      totalDy = dxLocal * math.sin(initialHeading) + dyLocal * math.cos(initialHeading);
+      totalDTheta = dTheta;
+    }
+
+    return IcpTransform(totalDx, totalDy, totalDTheta, true);
+  }
+
   static List<Offset> _toCartesian(LidarScan scan) {
     return scan.validPoints.map((pt) {
       final rad = pt.angleDeg * math.pi / 180.0;
