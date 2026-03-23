@@ -373,11 +373,15 @@ class _BrainScreenState extends ConsumerState<BrainScreen> with WidgetsBindingOb
 
               // LiDAR Map card — above camera preview
               LidarMapCard(
-                slam:        slam,
-                isReceiving: lidar.isReceiving,
-                pointCount:  lidar.pointCount,
-                revision:    lidar.revision,
+                slam:             slam,
+                isReceiving:      lidar.isReceiving,
+                pointCount:       lidar.pointCount,
+                revision:         lidar.revision,
+                slamMode:         lidar.slamMode,
+                bootstrapSecsLeft: lidar.bootstrapSecsLeft,
+                hasSavedMap:      lidar.hasSavedMap,
                 onReset: () => ref.read(lidarProvider.notifier).resetMap(),
+                onSave:  () => ref.read(lidarProvider.notifier).saveMap(),
               ),
 
               const SizedBox(height: 12),
@@ -569,6 +573,31 @@ class _StatCard extends StatelessWidget {
       );
 }
 
+class _StatChip extends StatelessWidget {
+  final String label, value;
+  final Color color;
+  const _StatChip({required this.label, required this.value, required this.color});
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: color.withValues(alpha: 0.25)),
+          ),
+          child: Column(
+            children: [
+              Text(label, style: monoStyle(size: 8, color: KodaColors.sub, spacing: 2)),
+              const SizedBox(height: 3),
+              Text(value, style: monoStyle(size: 11, color: color, weight: FontWeight.bold)),
+            ],
+          ),
+        ),
+      );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // REMOTE SCREEN (tab wrapper)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -678,11 +707,15 @@ class JoystickScreen extends ConsumerWidget {
 
           // LiDAR Map card — above D-pad
           LidarMapCard(
-            slam:        slam,
-            isReceiving: lidar.isReceiving,
-            pointCount:  lidar.pointCount,
-            revision:    lidar.revision,
+            slam:             slam,
+            isReceiving:      lidar.isReceiving,
+            pointCount:       lidar.pointCount,
+            revision:         lidar.revision,
+            slamMode:         lidar.slamMode,
+            bootstrapSecsLeft: lidar.bootstrapSecsLeft,
+            hasSavedMap:      lidar.hasSavedMap,
             onReset: () => ref.read(lidarProvider.notifier).resetMap(),
+            onSave:  () => ref.read(lidarProvider.notifier).saveMap(),
           ),
           const SizedBox(height: 12),
 
@@ -935,6 +968,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     {'id': 'llm',     'label': '🧠 LLM'},
     {'id': 'voice',   'label': '🎙 Voice'},
     {'id': 'motor',   'label': '⚙️ Motor'},
+    {'id': 'lidar',   'label': '📡 LiDAR'},
     {'id': 'memory',  'label': '💾 Memory'},
     {'id': 'connect', 'label': '📡 Connect'},
     {'id': 'system',  'label': '🔧 System'},
@@ -1256,6 +1290,147 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
           ),
+        ]);
+
+      case 'lidar':
+        return Column(children: [
+          // ── Angular offset calibration ──────────────────────────────────
+          KodaCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('ANGULAR OFFSET', style: monoStyle(size: 11, color: KodaColors.amber, spacing: 2)),
+                const SizedBox(height: 6),
+                Text(
+                  'Rotate the angle map so 0° = robot forward direction.\n'
+                  'Point Koda at a wall, note the reported angle, set offset = that angle.',
+                  style: monoStyle(size: 10, color: KodaColors.sub),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Text('OFFSET', style: monoStyle(size: 10, color: KodaColors.dim)),
+                    const Spacer(),
+                    Text(
+                      '${s.lidarAngularOffset.toStringAsFixed(1)}°',
+                      style: monoStyle(size: 13, color: KodaColors.amber),
+                    ),
+                  ],
+                ),
+                Slider(
+                  value: s.lidarAngularOffset,
+                  min: 0,
+                  max: 359,
+                  divisions: 359,
+                  activeColor: KodaColors.amber,
+                  inactiveColor: KodaColors.border,
+                  onChanged: (v) => sN.updateField(
+                    (s) => s.copyWith(lidarAngularOffset: v),
+                  ),
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('0°', style: monoStyle(size: 9, color: KodaColors.dim)),
+                    Text('180°', style: monoStyle(size: 9, color: KodaColors.dim)),
+                    Text('359°', style: monoStyle(size: 9, color: KodaColors.dim)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => sN.updateField((s) => s.copyWith(lidarAngularOffset: 0.0)),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: KodaColors.border),
+                          foregroundColor: KodaColors.dim,
+                        ),
+                        child: Text('RESET TO 0°', style: monoStyle(size: 10)),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => sN.updateField((s) => s.copyWith(lidarAngularOffset: 40.0)),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: KodaColors.amber.withValues(alpha: 0.4)),
+                          foregroundColor: KodaColors.amber,
+                        ),
+                        child: Text('RESET TO 40°', style: monoStyle(size: 10, color: KodaColors.amber)),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // ── Live scan stats ─────────────────────────────────────────────
+          Consumer(builder: (context, ref, _) {
+            final lidar = ref.watch(lidarProvider);
+            return KodaCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('LIVE SCAN', style: monoStyle(size: 11, color: KodaColors.amber, spacing: 2)),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      _StatChip(
+                        label: 'STATUS',
+                        value: lidar.isReceiving ? 'LIVE' : 'NO SIGNAL',
+                        color: lidar.isReceiving ? KodaColors.green : KodaColors.dim,
+                      ),
+                      const SizedBox(width: 8),
+                      _StatChip(
+                        label: 'POINTS',
+                        value: '${lidar.pointCount}',
+                        color: KodaColors.amber,
+                      ),
+                      const SizedBox(width: 8),
+                      _StatChip(
+                        label: 'NEAREST',
+                        value: lidar.nearestMm != null
+                            ? '${(lidar.nearestMm! / 10).round()}cm'
+                            : '--',
+                        color: KodaColors.blue,
+                      ),
+                    ],
+                  ),
+                  if (lidar.isReceiving && lidar.nearestAngleDeg != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Nearest obstacle at ${lidar.nearestAngleDeg!.toStringAsFixed(0)}° '
+                      '— if this should be 0° (forward), set offset = ${lidar.nearestAngleDeg!.toStringAsFixed(0)}°',
+                      style: monoStyle(size: 10, color: KodaColors.sub),
+                    ),
+                    const SizedBox(height: 6),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          final angle = lidar.nearestAngleDeg!;
+                          sN.updateField((s) => s.copyWith(lidarAngularOffset: angle));
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1A1200),
+                          foregroundColor: KodaColors.amber,
+                          side: const BorderSide(color: KodaColors.amber),
+                          elevation: 0,
+                        ),
+                        child: Text(
+                          'SET FORWARD = ${lidar.nearestAngleDeg!.toStringAsFixed(0)}°',
+                          style: monoStyle(size: 11, color: KodaColors.amber),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            );
+          }),
         ]);
 
       case 'context':

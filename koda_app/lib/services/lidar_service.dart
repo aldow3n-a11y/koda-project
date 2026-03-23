@@ -47,15 +47,18 @@ class LidarScan {
 /// Receives raw BLE bytes from the ESP32 LiDAR characteristic,
 /// parses the packet protocol, and emits [LidarScan] per revolution.
 ///
-/// Protocol (LD-series compatible, 0xAA 0x55 framing):
-///   [0xAA][0x55][speed:1B][start_angle_lo:1B][start_angle_hi:1B]
-///   [n_points:1B][dist0_lo:1B][dist0_hi:1B]...[distN_lo:1B][distN_hi:1B]
-///   [end_angle_lo:1B][end_angle_hi:1B][checksum:2B]
+/// Protocol: 360 S7 LDS custom UART, reverse-engineered March 2026.
+///   ESP32 firmware parses the 34-byte packets (sync: 55 AA 03 08) and sends
+///   clean 4-byte pairs over BLE: [angle_L][angle_H][dist_L][dist_H]
+///   where angle = degree slot 0-359 and dist = mm.
 ///
-/// If protocol does not match, raw bytes are available via [rawBytesStream]
-/// for manual inspection / protocol identification.
+/// Angular offset: subtract [angularOffsetDeg] from raw angle so 0° = robot forward.
+/// Calibrate by pointing robot at wall, noting reported angle, setting offset = that angle.
 class LidarService {
   static const int _maxBufSize  = 4096;
+
+  /// Degrees to subtract from raw angle. Set from AppSettings.lidarAngularOffset.
+  double angularOffsetDeg = 40.0;
 
   final _buffer = <int>[];
   final _scanAccum = <LidarPoint>[];
@@ -105,9 +108,10 @@ class LidarService {
       final dist  = (distLo | (distHi << 8)).toDouble();
 
       if (dist > 0) {
-        // Hardware offset: LiDAR dead center front is mechanically at 40°
-        double correctedAngle = angle - 40.0;
+        // Apply configurable angular offset so 0° = robot forward
+        double correctedAngle = angle - angularOffsetDeg;
         if (correctedAngle < 0) correctedAngle += 360.0;
+        if (correctedAngle >= 360.0) correctedAngle -= 360.0;
 
         _scanAccum.add(LidarPoint(angleDeg: correctedAngle, distanceMm: dist));
         pointsAdded = true;
@@ -115,10 +119,10 @@ class LidarService {
     }
 
     if (pointsAdded) {
-      // The ESP32 sends a complete 360 sweep every 350ms in a burst of BLE packets.
-      // Wait a short time to accumulate the full burst before emitting the SLAM scan.
+      // ESP32 sends a complete 350ms sweep as a burst of BLE chunks (30ms delay each).
+      // Wait 200ms after last byte to ensure the full burst has arrived before emitting.
       _sweepTimer?.cancel();
-      _sweepTimer = Timer(const Duration(milliseconds: 150), () {
+      _sweepTimer = Timer(const Duration(milliseconds: 200), () {
         if (_scanAccum.isNotEmpty) {
           _emitScan();
           _totalPackets++;

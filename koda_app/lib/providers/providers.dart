@@ -23,6 +23,9 @@ final remoteSpeedProvider = StateProvider<int>((ref) => 60);
 // ─── Services (singletons) ────────────────────────────────────────────────────
 final lidarServiceProvider = Provider<LidarService>((ref) {
   final s = LidarService();
+  // Note: settingsProvider._load() is async, so we can't read the saved value here.
+  // Instead we set the default and let SettingsNotifier sync it once _load() completes.
+  s.angularOffsetDeg = 40.0;
   ref.onDispose(s.dispose);
   return s;
 });
@@ -55,7 +58,9 @@ final contextServiceProvider = Provider<ContextService>((ref) => ContextService(
 
 // ─── Settings Provider ────────────────────────────────────────────────────────
 class SettingsNotifier extends StateNotifier<AppSettings> {
-  SettingsNotifier() : super(const AppSettings()) {
+  final Ref _ref;
+
+  SettingsNotifier(this._ref) : super(const AppSettings()) {
     _load();
   }
 
@@ -64,6 +69,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     final raw = prefs.getString('app_settings');
     if (raw != null) {
       state = AppSettings.fromJson(jsonDecode(raw));
+      // Sync loaded offset to LidarService immediately
+      _ref.read(lidarServiceProvider).angularOffsetDeg = state.lidarAngularOffset;
     }
   }
 
@@ -71,6 +78,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     state = settings;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('app_settings', jsonEncode(settings.toJson()));
+    // Sync lidar offset live — user sees map update as they drag slider
+    _ref.read(lidarServiceProvider).angularOffsetDeg = settings.lidarAngularOffset;
   }
 
   Future<void> updateField(AppSettings Function(AppSettings) fn) async {
@@ -80,7 +89,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
 
 final settingsProvider =
     StateNotifierProvider<SettingsNotifier, AppSettings>((ref) {
-  return SettingsNotifier();
+  return SettingsNotifier(ref);
 });
 
 // ─── Motor Config Provider ────────────────────────────────────────────────────
@@ -194,32 +203,44 @@ final bleConnectionProvider =
 // ─── LiDAR + SLAM Provider ────────────────────────────────────────────────────
 
 class LidarState {
-  final bool     isReceiving;
-  final int      pointCount;
-  final int      revision;  // increments on each new scan — drives repaint
-  final double?  nearestMm;
-  final double?  nearestAngleDeg;
+  final bool      isReceiving;
+  final int       pointCount;
+  final int       revision;
+  final double?   nearestMm;
+  final double?   nearestAngleDeg;
+  final SlamMode  slamMode;
+  final int       bootstrapSecsLeft;  // countdown during bootstrap phase
+  final bool      hasSavedMap;
 
   const LidarState({
-    this.isReceiving    = false,
-    this.pointCount     = 0,
-    this.revision       = 0,
+    this.isReceiving       = false,
+    this.pointCount        = 0,
+    this.revision          = 0,
     this.nearestMm,
     this.nearestAngleDeg,
+    this.slamMode          = SlamMode.idle,
+    this.bootstrapSecsLeft = 0,
+    this.hasSavedMap       = false,
   });
 
   LidarState copyWith({
-    bool?   isReceiving,
-    int?    pointCount,
-    int?    revision,
-    double? nearestMm,
-    double? nearestAngleDeg,
+    bool?     isReceiving,
+    int?      pointCount,
+    int?      revision,
+    double?   nearestMm,
+    double?   nearestAngleDeg,
+    SlamMode? slamMode,
+    int?      bootstrapSecsLeft,
+    bool?     hasSavedMap,
   }) => LidarState(
-    isReceiving:    isReceiving    ?? this.isReceiving,
-    pointCount:     pointCount     ?? this.pointCount,
-    revision:       revision       ?? this.revision,
-    nearestMm:      nearestMm      ?? this.nearestMm,
-    nearestAngleDeg: nearestAngleDeg ?? this.nearestAngleDeg,
+    isReceiving:       isReceiving       ?? this.isReceiving,
+    pointCount:        pointCount        ?? this.pointCount,
+    revision:          revision          ?? this.revision,
+    nearestMm:         nearestMm         ?? this.nearestMm,
+    nearestAngleDeg:   nearestAngleDeg   ?? this.nearestAngleDeg,
+    slamMode:          slamMode          ?? this.slamMode,
+    bootstrapSecsLeft: bootstrapSecsLeft ?? this.bootstrapSecsLeft,
+    hasSavedMap:       hasSavedMap       ?? this.hasSavedMap,
   );
 }
 
@@ -229,7 +250,32 @@ class LidarNotifier extends StateNotifier<LidarState> {
   StreamSubscription? _scanSub;
 
   LidarNotifier(this._lidar, this._slam) : super(const LidarState()) {
+    // Wire SLAM mode/bootstrap changes to state
+    _slam.onStateChange = (mode, secsLeft) {
+      state = state.copyWith(slamMode: mode, bootstrapSecsLeft: secsLeft);
+    };
     _scanSub = _lidar.scanStream.listen(_onScan);
+    _initOnBoot();
+  }
+
+  /// On boot: check for saved map — load it, else start bootstrap.
+  Future<void> _initOnBoot() async {
+    final has = await SlamService.hasSavedMap();
+    if (has) {
+      final loaded = await _slam.loadMap();
+      state = state.copyWith(
+        hasSavedMap: loaded,
+        slamMode: loaded ? SlamMode.navigation : SlamMode.idle,
+      );
+    } else {
+      // No map — start bootstrap immediately
+      _slam.startBootstrap();
+      state = state.copyWith(
+        hasSavedMap: false,
+        slamMode: SlamMode.bootstrap,
+        bootstrapSecsLeft: 10,
+      );
+    }
   }
 
   void _onScan(LidarScan scan) {
@@ -240,21 +286,38 @@ class LidarNotifier extends StateNotifier<LidarState> {
       revision:        state.revision + 1,
       nearestMm:       scan.nearestDistanceMm,
       nearestAngleDeg: scan.nearestAngleDeg,
+      slamMode:        _slam.mode,
+      bootstrapSecsLeft: _slam.bootstrapSecsLeft,
     );
   }
 
-  /// Called by BrainNotifier/SkillExecutor when a motor command is sent,
-  /// so the SLAM dead-reckoning stays in sync.
   void notifyMotorCommand(String cmd, int speedPct, int durationMs) {
     _slam.updatePoseFromCommand(
       cmd: cmd, speedPct: speedPct, durationMs: durationMs,
     );
   }
 
+  /// Reset + restart bootstrap
   void resetMap() {
     _slam.resetMap();
     _lidar.reset();
-    state = const LidarState();
+    _slam.startBootstrap();
+    state = state.copyWith(
+      isReceiving: false,
+      pointCount: 0,
+      revision: state.revision + 1,
+      nearestMm: null,
+      nearestAngleDeg: null,
+      slamMode: SlamMode.bootstrap,
+      bootstrapSecsLeft: 10,
+    );
+  }
+
+  /// Save map to disk
+  Future<bool> saveMap() async {
+    final ok = await _slam.saveMap();
+    if (ok) state = state.copyWith(hasSavedMap: true);
+    return ok;
   }
 
   @override

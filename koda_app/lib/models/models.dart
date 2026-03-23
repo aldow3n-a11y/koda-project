@@ -171,6 +171,10 @@ class AppSettings {
   final int maxLoopIterations;
   final String customApiUrl;
   final bool keepScreenAwake;
+  /// Degrees to subtract from raw LiDAR angle so that 0° = robot forward.
+  /// Calibrate by pointing robot at a wall, noting the reported angle,
+  /// then setting this offset so that angle reads 0°.
+  final double lidarAngularOffset;
 
   const AppSettings({
     this.apiKey = '',
@@ -188,13 +192,14 @@ class AppSettings {
     this.llmCooldownMs = 2500,
     this.maxLoopIterations = 20,
     this.keepScreenAwake = true,
+    this.lidarAngularOffset = 40.0,  // default from initial calibration
   });
 
   AppSettings copyWith({
     String? apiKey, String? model, String? customApiUrl, String? ttsVoice, String? wakeWord,
     bool? voiceEnabled, bool? memoryEnabled, bool? cloudSync, bool? devMode,
     String? bleDeviceName, int? bleWatchdogMs, int? maxTokens, int? llmCooldownMs,
-    int? maxLoopIterations, bool? keepScreenAwake,
+    int? maxLoopIterations, bool? keepScreenAwake, double? lidarAngularOffset,
   }) =>
       AppSettings(
         apiKey: apiKey ?? this.apiKey,
@@ -212,6 +217,7 @@ class AppSettings {
         llmCooldownMs: llmCooldownMs ?? this.llmCooldownMs,
         maxLoopIterations: maxLoopIterations ?? this.maxLoopIterations,
         keepScreenAwake: keepScreenAwake ?? this.keepScreenAwake,
+        lidarAngularOffset: lidarAngularOffset ?? this.lidarAngularOffset,
       );
 
   Map<String, dynamic> toJson() => {
@@ -221,7 +227,7 @@ class AppSettings {
     'devMode': devMode, 'bleDeviceName': bleDeviceName,
     'bleWatchdogMs': bleWatchdogMs, 'maxTokens': maxTokens,
     'llmCooldownMs': llmCooldownMs, 'maxLoopIterations': maxLoopIterations,
-    'keepScreenAwake': keepScreenAwake,
+    'keepScreenAwake': keepScreenAwake, 'lidarAngularOffset': lidarAngularOffset,
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -240,6 +246,7 @@ class AppSettings {
     llmCooldownMs: j['llmCooldownMs'] ?? 800,
     maxLoopIterations: j['maxLoopIterations'] ?? 20,
     keepScreenAwake: j['keepScreenAwake'] ?? true,
+    lidarAngularOffset: (j['lidarAngularOffset'] as num?)?.toDouble() ?? 40.0,
   );
 }
 
