@@ -890,7 +890,7 @@ class BrainNotifier extends StateNotifier<BrainState> {
         }
         return cm != null && cm != 255 ? cm * 10 : null; // mm output for skill logic
       },
-      onPlanTo: (x, y) async => _ref.read(slamServiceProvider).planTo(x, y),
+      onPlanTo: (x, y) async => _ref.read(slamServiceProvider).driveTo(x, y),
       onChangeScreen: (index) async {
         _ref.read(activePageProvider.notifier).state = index;
       },

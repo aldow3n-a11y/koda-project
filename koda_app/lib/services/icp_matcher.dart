@@ -291,14 +291,18 @@ class IcpMatcher {
     return IcpTransform(totalDx, totalDy, totalDTheta, true);
   }
 
-  static List<Offset> _toCartesian(LidarScan scan) {
-    return scan.validPoints.map((pt) {
+  static List<Offset> _toCartesian(LidarScan scan, {int step = 3}) {
+    final pts = <Offset>[];
+    final valid = scan.validPoints;
+    for (int i = 0; i < valid.length; i += step) {
+      final pt = valid[i];
       final rad = pt.angleDeg * math.pi / 180.0;
-      return Offset(
+      pts.add(Offset(
         pt.distanceMm * math.cos(-rad),
         pt.distanceMm * math.sin(-rad),
-      );
-    }).toList();
+      ));
+    }
+    return pts;
   }
 
   static List<Offset> _transformPoints(List<Offset> pts, double dx, double dy, double dt) {

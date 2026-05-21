@@ -220,6 +220,8 @@ class SlamService {
   int _stuckCount = 0;
   static const int _requiredStuckFrames = 5;
   DateTime _lastMoveTime = DateTime.now();
+  DateTime _lastMatchTime = DateTime.now();
+  Completer<bool>? _navCompleter;
 
   // Relocalization state
   bool isLost = false;
@@ -269,6 +271,10 @@ class SlamService {
 
     if (currentPath.isEmpty) {
       grid.revision++; // Path finished
+      if (_navCompleter != null && !_navCompleter!.isCompleted) {
+        _navCompleter!.complete(true);
+        _navCompleter = null;
+      }
       return;
     }
 
@@ -416,6 +422,14 @@ class SlamService {
   }
 
   void _integrateMapping(LidarScan scan) {
+    final now = DateTime.now();
+    final isMoving = now.difference(_lastMoveTime).inMilliseconds < 500;
+    final throttleMs = isMoving ? 300 : 2000;
+    if (now.difference(_lastMatchTime).inMilliseconds < throttleMs) {
+      return;
+    }
+    _lastMatchTime = now;
+
     if (latestScan != null && _lastScanPose != null) {
       final dWorldX = pose.xMm - _lastScanPose!.xMm;
       final dWorldY = pose.yMm - _lastScanPose!.yMm;
@@ -486,6 +500,10 @@ class SlamService {
           if (_stuckCount >= _requiredStuckFrames) {
             _stuckCount = 0;
             onStuck?.call('stuck');
+            if (_navCompleter != null && !_navCompleter!.isCompleted) {
+              _navCompleter!.complete(false);
+              _navCompleter = null;
+            }
           }
         } else {
           _stuckCount = 0;
@@ -594,7 +612,7 @@ class SlamService {
   void invalidatePose() {
     _lastScanPose = null;
     latestScan = null;
-    currentPath = [];
+    cancelNavigation();
     isLost = true;
     onKidnapped?.call();
   }
@@ -638,6 +656,7 @@ class SlamService {
   // ── Path Planning ──────────────────────────────────────────────────────────
 
   bool planTo(double targetXmm, double targetYmm) {
+    cancelNavigation();
     final goalMm = Offset(targetXmm, targetYmm);
     final startMm = Offset(pose.xMm, pose.yMm);
     currentPath = PathPlanner.planPath(grid, startMm, goalMm);
@@ -645,11 +664,28 @@ class SlamService {
     return currentPath.isNotEmpty;
   }
 
-  void clearPath() {
+  Future<bool> driveTo(double targetXmm, double targetYmm) {
+    final ok = planTo(targetXmm, targetYmm);
+    if (!ok) {
+      return Future.value(false);
+    }
+    _navCompleter = Completer<bool>();
+    return _navCompleter!.future;
+  }
+
+  void cancelNavigation() {
     if (currentPath.isNotEmpty) {
       currentPath = [];
       grid.revision++;
     }
+    if (_navCompleter != null && !_navCompleter!.isCompleted) {
+      _navCompleter!.complete(false);
+    }
+    _navCompleter = null;
+  }
+
+  void clearPath() {
+    cancelNavigation();
   }
 
   // ── Map persistence ────────────────────────────────────────────────────────
@@ -750,7 +786,7 @@ class SlamService {
     latestScan    = null;
     _lastScanPose = null;
     _bootstrapLastScan = null;
-    currentPath.clear();
+    cancelNavigation();
     _mode = SlamMode.idle;
     onStateChange?.call(_mode, 0);
   }

@@ -466,18 +466,19 @@ class SkillExecutor {
     final x = a.paramInt('target_x', 0).toDouble();
     final y = a.paramInt('target_y', 0).toDouble();
     onLog('cmd', 'drive_to: X:$x, Y:$y');
+    onLog('sys', 'Planning path and driving to X:$x, Y:$y...');
     
     final ok = await onPlanTo(x, y);
     if (!ok) {
-      onLog('err', 'Failed to plan path to X:$x, Y:$y');
-      await onSpeak("I can't find a path to those coordinates. It might be blocked.");
+      onLog('err', 'Failed to reach destination or path planning failed for target X:$x, Y:$y');
+      await onSpeak("I couldn't reach the target coordinates.");
       if (onSetLastSummary != null) {
-        onSetLastSummary!('Action failed: drive_to X:$x, Y:$y failed. No path found.');
+        onSetLastSummary!('Action failed: drive_to was aborted or robot got stuck.');
       }
     } else {
-      onLog('sys', 'Path planned. Executing…');
+      onLog('sys', 'Destination reached successfully.');
       if (onSetLastSummary != null) {
-        onSetLastSummary!('Action succeeded: path to X:$x, Y:$y planned and execution started.');
+        onSetLastSummary!('Action succeeded: drive_to destination reached.');
       }
     }
   }
