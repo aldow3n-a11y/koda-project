@@ -81,6 +81,12 @@ uint16_t scanDist[360];
 uint8_t  scanHits[360];
 unsigned long parsedPackets = 0;
 
+// Temporal Stability Buffer
+#define STABILITY_FRAMES 5
+#define STABILITY_TOLERANCE_MM 100
+uint16_t frameBuffer[STABILITY_FRAMES][360];
+int currentFrameIdx = 0;
+
 // Angle range tracking for Serial report
 uint16_t rawAngleMin = 0xFFFF;
 uint16_t rawAngleMax = 0;
@@ -185,6 +191,7 @@ void setup() {
 
     LidarSerial.begin(115200, SERIAL_8N1, LIDAR_RX_PIN, LIDAR_TX_PIN);
     motor.begin();
+    executor.scanDist = scanDist; // Give guard loop live access to LiDAR data
 
     NimBLEDevice::init(DEVICE_NAME);
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);
@@ -275,15 +282,45 @@ void loop() {
         }
         if (minD == 0xFFFF) minD = 0;
 
-        Serial.printf("[LIDAR] pkts:%lu pts:%d closest:%dmm @%ddeg raw:[%u-%u]=%.0f-%.0fdeg\n",
-            parsedPackets, validCount, minD, minAngle,
+        // ── Temporal Stability Filter (The Brain Filter) ──
+        // Store current scan in circular buffer
+        for (int i = 0; i < 360; i++) {
+            frameBuffer[currentFrameIdx][i] = scanDist[i];
+        }
+        
+        int stableCount = 0;
+        
+        // Filter out noisy points: must appear in at least 60% of recent frames
+        for (int i = 0; i < 360; i++) {
+            if (scanDist[i] == 0) continue;
+            
+            int appearanceCount = 0;
+            for (int f = 0; f < STABILITY_FRAMES; f++) {
+                uint16_t historicDist = frameBuffer[f][i];
+                if (historicDist > 0 && abs((int)historicDist - (int)scanDist[i]) < STABILITY_TOLERANCE_MM) {
+                    appearanceCount++;
+                }
+            }
+            
+            // If it doesn't appear in at least 3 out of 5 frames (60%), drop it
+            if (appearanceCount < 3) {
+                scanDist[i] = 0; // Filtered out! (Dust, noise, or moving object)
+            } else {
+                stableCount++;
+            }
+        }
+        
+        currentFrameIdx = (currentFrameIdx + 1) % STABILITY_FRAMES;
+
+        Serial.printf("[LIDAR] pkts:%lu pts:%d stable:%d closest:%dmm @%ddeg raw:[%u-%u]=%.0f-%.0fdeg\n",
+            parsedPackets, validCount, stableCount, minD, minAngle,
             rawAngleMin, rawAngleMax,
             rawAngleMin == 0xFFFF ? 0 : (((rawAngleMin & 0x7FFF) - 0x2000) * 0.01f),
             rawAngleMax == 0 ? 0 : (((rawAngleMax & 0x7FFF) - 0x2000) * 0.01f));
 
         // BLE — push raw angle+distance binary pairs
         // Format: [angle_L][angle_H][dist_L][dist_H] per reading
-        if (bleConnected && validCount > 0) {
+        if (bleConnected && stableCount > 0) {
             uint8_t chunk[180];
             int chunkIdx = 0;
             for (int i = 0; i < 360; i++) {

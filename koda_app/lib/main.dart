@@ -44,8 +44,6 @@ class KodaShell extends ConsumerStatefulWidget {
 }
 
 class _KodaShellState extends ConsumerState<KodaShell> {
-  int _page = 0;
-
   static const _pages = [
     HomeScreen(),
     BrainScreen(),
@@ -64,6 +62,7 @@ class _KodaShellState extends ConsumerState<KodaShell> {
   Widget build(BuildContext context) {
     final ble   = ref.watch(bleConnectionProvider);
     final brain = ref.watch(brainProvider);
+    final page  = ref.watch(activePageProvider);
 
     final pageLabels = ['HOME', 'BRAIN', 'REMOTE', 'SETTINGS'];
 
@@ -150,17 +149,17 @@ class _KodaShellState extends ConsumerState<KodaShell> {
                 ),
                 const Spacer(),
                 Text('KODA v0.1',
-                    style: monoStyle(size: 9, color: KodaColors.amber, spacing: 2)),
+                  style: monoStyle(size: 9, color: KodaColors.amber, spacing: 2)),
                 const SizedBox(width: 8),
-                Text(pageLabels[_page],
-                    style: monoStyle(size: 9, color: KodaColors.dim)),
+                Text(pageLabels[page],
+                  style: monoStyle(size: 9, color: KodaColors.dim)),
               ],
             ),
           ),
         ),
       ),
       body: IndexedStack(
-        index: _page,
+        index: page,
         children: _pages,
       ),
       bottomNavigationBar: Container(
@@ -168,8 +167,8 @@ class _KodaShellState extends ConsumerState<KodaShell> {
           border: Border(top: BorderSide(color: KodaColors.border)),
         ),
         child: BottomNavigationBar(
-          currentIndex: _page,
-          onTap: (i) => setState(() => _page = i),
+          currentIndex: page,
+          onTap: (i) => ref.read(activePageProvider.notifier).state = i,
           items: _navItems,
           selectedLabelStyle: monoStyle(size: 9, color: KodaColors.amber, spacing: 1),
           unselectedLabelStyle: monoStyle(size: 9, color: KodaColors.dim),

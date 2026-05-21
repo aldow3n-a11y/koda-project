@@ -5,8 +5,17 @@ import 'package:speech_to_text/speech_to_text.dart';
 class TtsService {
   final FlutterTts _tts = FlutterTts();
   bool _speaking = false;
+  Future<void>? _initFuture;
 
   Future<void> init({String? savedVoiceName}) async {
+    _initFuture ??= _doInit();
+    await _initFuture;
+    if (savedVoiceName != null && savedVoiceName.isNotEmpty) {
+      await _applyVoiceByName(savedVoiceName);
+    }
+  }
+
+  Future<void> _doInit() async {
     // Force Google TTS engine (not Samsung's or other OEM robot voice)
     try {
       await _tts.setEngine('com.google.android.tts');
@@ -20,12 +29,7 @@ class TtsService {
     await _tts.setPitch(1.0);
     await _tts.awaitSpeakCompletion(true);
 
-    // Apply saved voice or auto-select the best available
-    if (savedVoiceName != null && savedVoiceName.isNotEmpty) {
-      await _applyVoiceByName(savedVoiceName);
-    } else {
-      await _selectBestVoice();
-    }
+    await _selectBestVoice();
 
     _tts.setStartHandler(() => _speaking = true);
     _tts.setCompletionHandler(() => _speaking = false);
@@ -35,6 +39,7 @@ class TtsService {
   /// Returns all English voices available on device (from Google TTS engine).
   Future<List<Map<String, String>>> getEnglishVoices() async {
     try {
+      await init();
       final voices = await _tts.getVoices as List?;
       if (voices == null) return [];
       return voices
@@ -113,6 +118,7 @@ class TtsService {
 
   Future<void> speak(String text) async {
     if (text.isEmpty) return;
+    await init();
     if (_speaking) await _tts.stop();
     await _tts.speak(text);
   }
@@ -142,21 +148,32 @@ class SttService {
   final SpeechToText _stt = SpeechToText();
   bool _available = false;
   bool _listening = false;
+  Future<bool>? _initFuture;
 
-  Future<bool> init() async {
-    _available = await _stt.initialize(
-      onError: (e) => _listening = false,
-      onStatus: (s) {
-        if (s == 'done' || s == 'notListening') _listening = false;
-      },
-    );
+  Future<bool> init() {
+    return _initFuture ??= _doInit();
+  }
+
+  Future<bool> _doInit() async {
+    try {
+      _available = await _stt.initialize(
+        onError: (e) => _listening = false,
+        onStatus: (s) {
+          if (s == 'done' || s == 'notListening') _listening = false;
+        },
+      );
+    } catch (_) {
+      _available = false;
+    }
     return _available;
   }
 
   Future<void> startListening({
     required void Function(String text) onResult,
     String localeId = 'en_US',
+    int timeoutSec = 10,
   }) async {
+    await init();
     if (!_available || _listening) return;
     _listening = true;
     await _stt.listen(
@@ -166,7 +183,7 @@ class SttService {
         }
       },
       localeId: localeId,
-      listenFor: const Duration(seconds: 10),
+      listenFor: Duration(seconds: timeoutSec),
       pauseFor: const Duration(seconds: 3),
     );
   }

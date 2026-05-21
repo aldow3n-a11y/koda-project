@@ -9,6 +9,7 @@ class OccupancyMapPainter extends CustomPainter {
   final OccupancyGrid grid;
   final RobotPose pose;
   final int revision;
+  final List<Offset> currentPath;
 
   static const double cellPx = 3.0; // 300 cells * 3 = 900px map size
   static const double mapSize = kGridSize * cellPx;
@@ -17,6 +18,7 @@ class OccupancyMapPainter extends CustomPainter {
     required this.grid,
     required this.pose,
     required this.revision,
+    required this.currentPath,
   });
 
   @override
@@ -28,6 +30,23 @@ class OccupancyMapPainter extends CustomPainter {
       ..color = const Color(0xFF86D5FD)
       ..style = PaintingStyle.fill;
 
+    // Draw costmap inflation
+    for (int xIdx = 0; xIdx < kGridSize; xIdx++) {
+      for (int yIdx = 0; yIdx < kGridSize; yIdx++) {
+        final cost = grid.costmapCells[yIdx][xIdx];
+        if (cost > 0 && cost < 254) {
+          final px = (kGridSize - 1 - yIdx) * cellPx;
+          final py = (kGridSize - 1 - xIdx) * cellPx;
+          final alpha = (cost / 254 * 0.4).clamp(0.0, 1.0); // Soft glow
+          final inflationPaint = Paint()
+            ..color = const Color(0xFF86D5FD).withValues(alpha: alpha)
+            ..style = PaintingStyle.fill;
+          canvas.drawRect(Rect.fromLTWH(px, py, cellPx + 0.5, cellPx + 0.5), inflationPaint);
+        }
+      }
+    }
+
+    // Draw main cells
     for (int xIdx = 0; xIdx < kGridSize; xIdx++) {
       for (int yIdx = 0; yIdx < kGridSize; yIdx++) {
         final val = grid.cells[yIdx][xIdx];
@@ -44,6 +63,35 @@ class OccupancyMapPainter extends CustomPainter {
           canvas.drawRect(Rect.fromLTWH(px - 1, py - 1, cellPx + 2, cellPx + 2), occupiedPaint);
         }
       }
+    }
+
+    // ── Draw Planned Path ───────────────────────────────────────────────────
+    if (currentPath.isNotEmpty) {
+      final pathPaint = Paint()
+        ..color = KodaColors.amber
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.0
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round;
+
+      final path = Path();
+      bool first = true;
+      for (final p in currentPath) {
+        final px = _worldToPx(p.dx, p.dy);
+        if (first) {
+          path.moveTo(px.dx, px.dy);
+          first = false;
+        } else {
+          path.lineTo(px.dx, px.dy);
+        }
+      }
+      canvas.drawPath(path, pathPaint);
+
+      // Draw goal marker
+      final goal = currentPath.last;
+      final goalPx = _worldToPx(goal.dx, goal.dy);
+      canvas.drawCircle(goalPx, 6.0, Paint()..color = KodaColors.amber);
+      canvas.drawCircle(goalPx, 3.0, Paint()..color = KodaColors.bg);
     }
 
     // ── Robot marker ───────────────────────────────────────────────────────
@@ -324,14 +372,30 @@ class _LidarMapCardState extends State<LidarMapCard> {
                     maxScale: 5.0,
                     panEnabled: true,
                     scaleEnabled: true,
-                    child: CustomPaint(
-                      painter: OccupancyMapPainter(
-                        grid: widget.slam.grid,
-                        pose: widget.slam.pose,
-                        revision: widget.revision,
+                    child: GestureDetector(
+                      onTapUp: (details) {
+                        final py = details.localPosition.dy;
+                        final px = details.localPosition.dx;
+                        final cellPx = OccupancyMapPainter.cellPx;
+                        
+                        final xIdx = kGridSize - 1 - (py / cellPx);
+                        final yIdx = kGridSize - 1 - (px / cellPx);
+                        
+                        final xMm = (xIdx - kOriginCell) * kCellSizeMm;
+                        final yMm = (yIdx - kOriginCell) * kCellSizeMm;
+                        
+                        widget.slam.planTo(xMm.toDouble(), yMm.toDouble());
+                      },
+                      child: CustomPaint(
+                        painter: OccupancyMapPainter(
+                          grid: widget.slam.grid,
+                          pose: widget.slam.pose,
+                          revision: widget.revision,
+                          currentPath: widget.slam.currentPath,
+                        ),
+                        size: const Size(
+                            OccupancyMapPainter.mapSize, OccupancyMapPainter.mapSize),
                       ),
-                      size: const Size(
-                          OccupancyMapPainter.mapSize, OccupancyMapPainter.mapSize),
                     ),
                   );
                 },

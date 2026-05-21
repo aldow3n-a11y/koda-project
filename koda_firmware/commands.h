@@ -18,6 +18,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 class CommandExecutor {
 public:
+    // Safety threshold in mm — brake immediately if obstacle closer than this
+    static const uint16_t COLLISION_GUARD_MM = 250;
+
+    // LiDAR angular offset (degrees) — raw angle of robot's forward direction.
+    // Must match AppSettings.lidarAngularOffset in the Flutter app (default 105°).
+    static const int LIDAR_FORWARD_OFFSET_DEG = 105;
+
+    // scanDist pointer is set by main.ino so we can read live LiDAR data
+    uint16_t* scanDist = nullptr;
+
     explicit CommandExecutor(MotorDriver& motor) : _motor(motor) {}
 
     String execute(const String& payload) {
@@ -78,9 +88,34 @@ private:
             return String("{\"status\":\"error\",\"msg\":\"unknown: ") + cmd + "\"}";
         }
 
-        // Timed command — auto-brake after ms
+        // Timed command — auto-brake after ms, but poll LiDAR for collisions
         if (ms > 0 && strcmp(cmd, "stop") != 0) {
-            delay(ms);
+            const bool movingForward  = (strcmp(cmd, "forward") == 0);
+            const unsigned long deadline = millis() + ms;
+
+            while (millis() < deadline) {
+                delay(20);
+
+                // Only guard FORWARD movement.
+                // BACKWARD is a blindspot (phone holder blocks that LiDAR sector).
+                if (scanDist != nullptr && movingForward) {
+                    uint16_t minDist = 65535;
+                    // Check a ±25° arc dead ahead, offset by LIDAR_FORWARD_OFFSET_DEG
+                    // so that the guard checks the actual forward direction of the robot.
+                    for (int a = -25; a <= 25; a++) {
+                        int idx = (LIDAR_FORWARD_OFFSET_DEG + a + 360) % 360;
+                        if (scanDist[idx] > 0 && scanDist[idx] < minDist) {
+                            minDist = scanDist[idx];
+                        }
+                    }
+
+                    if (minDist < COLLISION_GUARD_MM) {
+                        _motor.brake();
+                        Serial.printf("[GUARD] Collision! %dmm ahead. Braking early.\n", minDist);
+                        return "{\"status\":\"collision\",\"dist_mm\":" + String(minDist) + "}";
+                    }
+                }
+            }
             _motor.brake();
         }
         return "{\"status\":\"ok\"}";

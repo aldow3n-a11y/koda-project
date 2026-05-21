@@ -40,6 +40,26 @@ class LidarScan {
     if (valid.isEmpty) return null;
     return valid.reduce((a, b) => a.distanceMm < b.distanceMm ? a : b).angleDeg;
   }
+
+  /// Minimum distance in a specific sector.
+  /// [centerDeg]: 0 is forward.
+  /// [widthDeg]: total width of cone.
+  double? getSectorMin(double centerDeg, double widthDeg) {
+    final halfWidth = widthDeg / 2;
+    final min = centerDeg - halfWidth;
+    final max = centerDeg + halfWidth;
+
+    final sectorPoints = validPoints.where((p) {
+      double a = p.angleDeg;
+      // Handle wrap-around for sectors crossing 0/360 boundary (like Front)
+      if (min < 0 && a > 360 + min) a -= 360;
+      else if (max > 360 && a < max - 360) a += 360;
+      return a >= min && a <= max;
+    });
+
+    if (sectorPoints.isEmpty) return null;
+    return sectorPoints.map((p) => p.distanceMm).reduce(math.min);
+  }
 }
 
 // ─── LiDAR Service ────────────────────────────────────────────────────────────
@@ -58,7 +78,7 @@ class LidarService {
   static const int _maxBufSize  = 4096;
 
   /// Degrees to subtract from raw angle. Set from AppSettings.lidarAngularOffset.
-  double angularOffsetDeg = 40.0;
+  double angularOffsetDeg = 105.0;
 
   final _buffer = <int>[];
   final _scanAccum = <LidarPoint>[];
