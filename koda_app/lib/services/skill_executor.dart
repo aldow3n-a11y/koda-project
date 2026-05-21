@@ -396,7 +396,6 @@ class SkillExecutor {
 
   Future<void> _turn(SkillAction a) async {
     final dir = a.param('direction', 'cw');
-    _lastTurnDir = dir; // Remember manual turns too
     final speed = a.paramInt('speed', 55);
     final ms = a.paramInt('ms', 500);
     final cmd = dir == 'ccw' ? KodaCmd.turnCcw : KodaCmd.turnCw;
