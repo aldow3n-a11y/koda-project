@@ -56,27 +56,42 @@ class ObjectTrackerService {
         final double imageWidth = inputImage.metadata?.size.width ?? image.width.toDouble();
         final double imageHeight = inputImage.metadata?.size.height ?? image.height.toDouble();
 
-        // Align coordinates based on device rotation
-        final double viewWidth = (rotation == InputImageRotation.rotation90deg || rotation == InputImageRotation.rotation270deg)
-            ? imageHeight
-            : imageWidth;
-        final double viewHeight = (rotation == InputImageRotation.rotation90deg || rotation == InputImageRotation.rotation270deg)
-            ? imageWidth
-            : imageHeight;
-
         final double cx = obj.boundingBox.left + obj.boundingBox.width / 2;
         final double cy = obj.boundingBox.top + obj.boundingBox.height / 2;
 
-        // Calculate area ratio
+        // Calculate area ratio in raw image space
         final double objArea = obj.boundingBox.width * obj.boundingBox.height;
-        final double totalArea = viewWidth * viewHeight;
+        final double totalArea = imageWidth * imageHeight;
         final double areaRatio = (totalArea > 0) ? (objArea / totalArea) : 0.0;
 
-        // Normalize to [-1.0, 1.0] range
-        double dx = (cx / viewWidth) * 2.0 - 1.0;
-        double dy = (cy / viewHeight) * 2.0 - 1.0;
+        // Normalize center to [0.0, 1.0] range in raw coordinates
+        final double ncx = imageWidth > 0 ? (cx / imageWidth) : 0.5;
+        final double ncy = imageHeight > 0 ? (cy / imageHeight) : 0.5;
 
-        // Mirror horizontal axis if it's the front camera so the eyes look in the correct direction
+        double dx = 0.0;
+        double dy = 0.0;
+
+        // Transform normalized raw coordinates to normalized screen coordinates [-1.0, 1.0]
+        switch (rotation) {
+          case InputImageRotation.rotation90deg:
+            dx = ncy * 2.0 - 1.0;
+            dy = ncx * 2.0 - 1.0;
+            break;
+          case InputImageRotation.rotation270deg:
+            dx = 1.0 - ncy * 2.0;
+            dy = 1.0 - ncx * 2.0;
+            break;
+          case InputImageRotation.rotation180deg:
+            dx = 1.0 - ncx * 2.0;
+            dy = 1.0 - ncy * 2.0;
+            break;
+          case InputImageRotation.rotation0deg:
+            dx = ncx * 2.0 - 1.0;
+            dy = ncy * 2.0 - 1.0;
+            break;
+        }
+
+        // Mirror horizontal axis if it's the front camera
         final isFront = camera.lensDirection == CameraLensDirection.front;
         if (isFront) {
           dx = -dx;

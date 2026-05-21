@@ -9,6 +9,7 @@ const kServiceUuid     = '12345678-1234-1234-1234-123456789012';
 const kCmdCharUuid     = '12345678-1234-1234-1234-123456789013';
 const kStatusCharUuid  = '12345678-1234-1234-1234-123456789014';
 const kLidarCharUuid   = '12345678-1234-1234-1234-123456789015';
+const kBodyCharUuid    = '12345678-1234-1234-1234-123456789016';
 
 enum BleStatus { idle, scanning, connecting, connected, disconnected, error }
 
@@ -17,6 +18,7 @@ class BleService {
   BluetoothCharacteristic? _cmdChar;
   BluetoothCharacteristic? _statusChar;
   BluetoothCharacteristic? _lidarChar;
+  BluetoothCharacteristic? _bodyChar;
   StreamSubscription? _connectionSub;
   Timer? _watchdogTimer;
 
@@ -26,10 +28,12 @@ class BleService {
   final _statusController     = StreamController<BleStatus>.broadcast();
   final _devicesController    = StreamController<List<KodaBtDevice>>.broadcast();
   final _logController        = StreamController<String>.broadcast();
+  final _bodyStateController  = StreamController<KodaBodyState>.broadcast();
 
   Stream<BleStatus>       get statusStream  => _statusController.stream;
   Stream<List<KodaBtDevice>> get devicesStream => _devicesController.stream;
   Stream<String>          get logStream     => _logController.stream;
+  Stream<KodaBodyState>   get bodyStateStream => _bodyStateController.stream;
 
   BleStatus _currentStatus = BleStatus.idle;
   final List<KodaBtDevice> _foundDevices = [];
@@ -103,6 +107,7 @@ class BleService {
             if (c.uuid.toString() == kCmdCharUuid)    _cmdChar    = c;
             if (c.uuid.toString() == kStatusCharUuid) _statusChar = c;
             if (c.uuid.toString() == kLidarCharUuid)  _lidarChar  = c;
+            if (c.uuid.toString() == kBodyCharUuid)   _bodyChar   = c;
           }
         }
       }
@@ -126,6 +131,17 @@ class BleService {
         _log('LiDAR characteristic not found — check ESP32 firmware.');
       }
 
+      // Subscribe to body state notifications
+      if (_bodyChar != null) {
+        await _bodyChar!.setNotifyValue(true);
+        _bodyChar!.onValueReceived.listen((data) {
+          _parseBodyPacket(data);
+        });
+        _log('Body state characteristic subscribed.');
+      } else {
+        _log('Body state characteristic not found — check ESP32 firmware.');
+      }
+
       // Watch for disconnection
       _connectionSub = btDevice.connectionState.listen((state) {
         if (state == BluetoothConnectionState.disconnected) {
@@ -133,6 +149,7 @@ class BleService {
           _emit(BleStatus.disconnected);
           _cmdChar = null;
           _statusChar = null;
+          _bodyChar = null;
         }
       });
 
@@ -156,6 +173,7 @@ class BleService {
     _device = null;
     _cmdChar = null;
     _statusChar = null;
+    _bodyChar = null;
     _emit(BleStatus.disconnected);
     _log('Disconnected by user.');
   }
@@ -218,5 +236,26 @@ class BleService {
     _statusController.close();
     _devicesController.close();
     _logController.close();
+    _bodyStateController.close();
+  }
+
+  void _parseBodyPacket(List<int> data) {
+    if (data.length < 7) return;
+    final mood = data[0];
+    final arousal = data[1];
+    final frontCm = data[2];
+    final leftCm = data[3];
+    final rightCm = data[4];
+    final flags = data[5] | (data[6] << 8);
+
+    final bodyState = KodaBodyState(
+      mood: mood,
+      arousal: arousal,
+      frontCm: frontCm,
+      leftCm: leftCm,
+      rightCm: rightCm,
+      flags: flags,
+    );
+    _bodyStateController.add(bodyState);
   }
 }

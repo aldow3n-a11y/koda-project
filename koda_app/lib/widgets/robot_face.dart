@@ -147,9 +147,9 @@ class _RobotFaceOverlayState extends ConsumerState<RobotFaceOverlay> with Ticker
         final driftOffset = _driftController.isAnimating ? _driftAnimation.value : _lookOffset;
         final animationValue = _loopController.value;
         
-        // 1. Get object tracking data from provider if available, else use standard drift
-        final trackingData = ref.watch(objectTrackingDataProvider);
-        final targetOffset = trackingData?.offset ?? driftOffset;
+        // 1. Get target look offset from cognition layer if active, else use standard drift
+        final cognition = ref.watch(cognitionProvider);
+        final targetOffset = (cognition.attentionTarget != Offset.zero) ? cognition.attentionTarget : driftOffset;
         
         // 2. Smoothly LERP the eyes' look direction (12% shift per frame)
         _currentLookOffset = Offset.lerp(_currentLookOffset, targetOffset, 0.12)!;

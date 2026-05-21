@@ -283,7 +283,7 @@ class AppSettings {
     maxLoopIterations: j['maxLoopIterations'] ?? 20,
     thinkingBudget: j['thinkingBudget'] ?? 0,
     keepScreenAwake: j['keepScreenAwake'] ?? true,
-    lidarAngularOffset: (j['lidarAngularOffset'] as num?)?.toDouble() ?? 40.0,
+    lidarAngularOffset: (j['lidarAngularOffset'] as num?)?.toDouble() ?? 105.0,
     lidarDecaySec: (j['lidarDecaySec'] as num?)?.toInt() ?? 30,
     wheelbaseMm: (j['wheelbaseMm'] as num?)?.toDouble() ?? 130.0,
     mmPerSecAt100pct: (j['mmPerSecAt100pct'] as num?)?.toDouble() ?? 330.0,
@@ -367,4 +367,33 @@ class ObjectTrackingData {
   final double areaRatio;
 
   const ObjectTrackingData(this.offset, this.areaRatio);
+}
+
+// ─── Koda Body State ─────────────────────────────────────────────────────────
+
+class KodaBodyState {
+  final int mood;
+  final int arousal;
+  final int frontCm;
+  final int leftCm;
+  final int rightCm;
+  final int flags;
+
+  const KodaBodyState({
+    required this.mood,
+    required this.arousal,
+    required this.frontCm,
+    required this.leftCm,
+    required this.rightCm,
+    required this.flags,
+  });
+
+  bool get isMoving => (flags & 0x01) != 0;
+  bool get obstacleFront => (flags & 0x02) != 0;
+  bool get obstacleLeft => (flags & 0x04) != 0;
+  bool get obstacleRight => (flags & 0x08) != 0;
+
+  @override
+  String toString() =>
+      'BodyState(mood: $mood, arousal: $arousal, front: ${frontCm}cm, left: ${leftCm}cm, right: ${rightCm}cm, flags: $flags)';
 }

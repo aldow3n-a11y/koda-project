@@ -210,6 +210,9 @@ class BleConnectionNotifier extends StateNotifier<BleConnectionState> {
         logs: [...state.logs.takeLast(49), log],
       );
     });
+    _ble.bodyStateStream.listen((bodyState) {
+      state = state.copyWith(bodyState: bodyState);
+    });
   }
 
   Future<void> scan() => _ble.startScan();
@@ -236,12 +239,14 @@ class BleConnectionState {
   final KodaBtDevice? connectedDevice;
   final List<KodaBtDevice> scannedDevices;
   final List<String> logs;
+  final KodaBodyState? bodyState;
 
   const BleConnectionState({
     this.status = BleStatus.idle,
     this.connectedDevice,
     this.scannedDevices = const [],
     this.logs = const [],
+    this.bodyState,
   });
 
   bool get isConnected => status == BleStatus.connected;
@@ -252,12 +257,14 @@ class BleConnectionState {
     KodaBtDevice? connectedDevice,
     List<KodaBtDevice>? scannedDevices,
     List<String>? logs,
+    KodaBodyState? bodyState,
   }) =>
       BleConnectionState(
         status: status ?? this.status,
         connectedDevice: connectedDevice ?? this.connectedDevice,
         scannedDevices: scannedDevices ?? this.scannedDevices,
         logs: logs ?? this.logs,
+        bodyState: bodyState ?? this.bodyState,
       );
 }
 
@@ -440,6 +447,209 @@ final lidarProvider =
   );
 });
 
+// ─── Perception Layer ────────────────────────────────────────────────────────
+class PerceptionState {
+  final List<LidarPoint> scanPoints;
+  final int frontCm;
+  final int leftCm;
+  final int rightCm;
+  final int backCm;
+  final ObjectTrackingData? trackingData;
+  final KodaBodyState? bodyState;
+
+  const PerceptionState({
+    this.scanPoints = const [],
+    this.frontCm = 255,
+    this.leftCm = 255,
+    this.rightCm = 255,
+    this.backCm = 255,
+    this.trackingData,
+    this.bodyState,
+  });
+
+  PerceptionState copyWith({
+    List<LidarPoint>? scanPoints,
+    int? frontCm,
+    int? leftCm,
+    int? rightCm,
+    int? backCm,
+    ObjectTrackingData? trackingData,
+    bool clearTrackingData = false,
+    KodaBodyState? bodyState,
+    bool clearBodyState = false,
+  }) {
+    return PerceptionState(
+      scanPoints: scanPoints ?? this.scanPoints,
+      frontCm: frontCm ?? this.frontCm,
+      leftCm: leftCm ?? this.leftCm,
+      rightCm: rightCm ?? this.rightCm,
+      backCm: backCm ?? this.backCm,
+      trackingData: clearTrackingData ? null : (trackingData ?? this.trackingData),
+      bodyState: clearBodyState ? null : (bodyState ?? this.bodyState),
+    );
+  }
+}
+
+class PerceptionNotifier extends StateNotifier<PerceptionState> {
+  final Ref _ref;
+
+  PerceptionNotifier(this._ref) : super(const PerceptionState()) {
+    // 1. Listen to LiDAR ranges
+    _ref.listen<LidarState>(lidarProvider, (prev, next) {
+      state = state.copyWith(
+        scanPoints: next.points,
+        frontCm: next.frontMm != null ? (next.frontMm! / 10).round() : 255,
+        leftCm: next.leftMm != null ? (next.leftMm! / 10).round() : 255,
+        rightCm: next.rightMm != null ? (next.rightMm! / 10).round() : 255,
+        backCm: next.backMm != null ? (next.backMm! / 10).round() : 255,
+      );
+    });
+
+    // 2. Listen to ML Kit Object tracking data
+    _ref.listen<ObjectTrackingData?>(objectTrackingDataProvider, (prev, next) {
+      state = state.copyWith(
+        trackingData: next,
+        clearTrackingData: next == null,
+      );
+    });
+
+    // 3. Listen to incoming BLE KodaBodyState
+    _ref.listen<BleConnectionState>(bleConnectionProvider, (prev, next) {
+      if (next.bodyState != null) {
+        state = state.copyWith(
+          bodyState: next.bodyState,
+          frontCm: next.bodyState!.frontCm,
+          leftCm: next.bodyState!.leftCm,
+          rightCm: next.bodyState!.rightCm,
+        );
+      } else if (next.bodyState == null && prev?.bodyState != null) {
+        state = state.copyWith(clearBodyState: true);
+      }
+    });
+  }
+}
+
+final perceptionProvider = StateNotifierProvider<PerceptionNotifier, PerceptionState>((ref) {
+  return PerceptionNotifier(ref);
+});
+
+// ─── Cognition Layer ─────────────────────────────────────────────────────────
+class CognitionState {
+  final RobotEmotion activeEmotion;
+  final Offset attentionTarget;
+  final int arousalLevel;
+  final bool isEmergencyActive;
+
+  const CognitionState({
+    this.activeEmotion = RobotEmotion.neutral,
+    this.attentionTarget = Offset.zero,
+    this.arousalLevel = 15,
+    this.isEmergencyActive = false,
+  });
+
+  CognitionState copyWith({
+    RobotEmotion? activeEmotion,
+    Offset? attentionTarget,
+    int? arousalLevel,
+    bool? isEmergencyActive,
+  }) {
+    return CognitionState(
+      activeEmotion: activeEmotion ?? this.activeEmotion,
+      attentionTarget: attentionTarget ?? this.attentionTarget,
+      arousalLevel: arousalLevel ?? this.arousalLevel,
+      isEmergencyActive: isEmergencyActive ?? this.isEmergencyActive,
+    );
+  }
+}
+
+class CognitionNotifier extends StateNotifier<CognitionState> {
+  final Ref _ref;
+  DateTime _lastAlertTime = DateTime.fromMillisecondsSinceEpoch(0);
+
+  CognitionNotifier(this._ref) : super(const CognitionState()) {
+    // Listen to perception state to run Urgency Scorer
+    _ref.listen<PerceptionState>(perceptionProvider, (prev, next) {
+      _evaluateUrgency(next);
+    });
+  }
+
+  void _evaluateUrgency(PerceptionState perception) {
+    // 1. Urgency Scorer logic: check sector distances
+    final int minDist = [
+      perception.frontCm,
+      perception.leftCm,
+      perception.rightCm,
+    ].reduce((a, b) => a < b ? a : b);
+
+    // If an obstacle is extremely close (< 25cm)
+    if (minDist < 25) {
+      final now = DateTime.now();
+      
+      // Prevent rapid alert loops (cooldown 5 seconds for voice alert)
+      final bool canSpeakAlert = now.difference(_lastAlertTime).inSeconds > 5;
+      
+      if (!state.isEmergencyActive || state.arousalLevel < 90) {
+        state = state.copyWith(
+          activeEmotion: RobotEmotion.surprised,
+          arousalLevel: 95,
+          isEmergencyActive: true,
+          attentionTarget: perception.trackingData?.offset ?? Offset.zero,
+        );
+
+        // Command the BLE motor controller to STOP immediately
+        _ref.read(bleConnectionProvider.notifier).sendCommand(
+          const MotorCommand(cmd: KodaCmd.stop, ms: 0),
+        );
+      }
+
+      if (canSpeakAlert) {
+        _lastAlertTime = now;
+        
+        // If brain/agent mode is active, interrupt standard task and speak
+        final brain = _ref.read(brainProvider.notifier);
+        if (brain.state.active) {
+          brain.interruptAndProcess(
+            'SYSTEM ALERT: Immediate obstacle collision threat detected at distance $minDist cm! '
+            'Stop, act startled/surprised, warn the user about the obstacle, and ask them to clear the path.',
+          );
+        }
+      }
+    } else {
+      // Resolve emergency state when obstacles clear
+      if (state.isEmergencyActive) {
+        state = state.copyWith(
+          arousalLevel: perception.bodyState?.arousal ?? 15,
+          isEmergencyActive: false,
+          activeEmotion: RobotEmotion.neutral,
+        );
+      }
+    }
+
+    // 2. Map tracking target or look drift to attention target
+    if (!state.isEmergencyActive) {
+      if (perception.trackingData != null) {
+        state = state.copyWith(
+          attentionTarget: perception.trackingData!.offset,
+          arousalLevel: 60, // higher arousal when tracking an object
+        );
+      } else {
+        // Fall back to calm drift / default
+        state = state.copyWith(
+          arousalLevel: perception.bodyState?.arousal ?? 15,
+        );
+      }
+    }
+  }
+
+  void updateEmotion(RobotEmotion emotion) {
+    state = state.copyWith(activeEmotion: emotion);
+  }
+}
+
+final cognitionProvider = StateNotifierProvider<CognitionNotifier, CognitionState>((ref) {
+  return CognitionNotifier(ref);
+});
+
 // ─── Brain Mode Provider ──────────────────────────────────────────────────────
 enum BrainStatus { idle, listening, thinking, executing, speaking }
 
@@ -570,15 +780,15 @@ class BrainNotifier extends StateNotifier<BrainState> {
       },
 
       getLidarRange: (direction) {
-        final lidar = _ref.read(lidarProvider);
-        double? mm;
+        final perception = _ref.read(perceptionProvider);
+        int? cm;
         switch (direction) {
-          case 'forward':  mm = lidar.frontMm; break;
-          case 'backward': mm = lidar.backMm;  break;
-          case 'left':     mm = lidar.leftMm;  break;
-          case 'right':    mm = lidar.rightMm; break;
+          case 'forward':  cm = perception.frontCm; break;
+          case 'backward': cm = perception.backCm;  break;
+          case 'left':     cm = perception.leftCm;  break;
+          case 'right':    cm = perception.rightCm; break;
         }
-        return mm?.round();
+        return cm != null && cm != 255 ? cm * 10 : null; // mm output for skill logic
       },
       onPlanTo: (x, y) async => _ref.read(slamServiceProvider).planTo(x, y),
       onChangeScreen: (index) async {
@@ -588,8 +798,12 @@ class BrainNotifier extends StateNotifier<BrainState> {
         state = state.copyWith(canvasContent: content);
       },
       onAnalyzeFrame: (headingStr) => _analyzeCurrentFrameForObjects(headingStr),
-      getObjectTrackingData: () => _ref.read(objectTrackingDataProvider),
+      getObjectTrackingData: () => _ref.read(perceptionProvider).trackingData,
       getCancelRequested: () => _cancelRequested,
+      getTrackingEnabled: () => _ref.read(faceTrackingEnabledProvider),
+      onSetTracking: (enabled) {
+        _ref.read(faceTrackingEnabledProvider.notifier).state = enabled;
+      },
     );
 
     // Wire SlamService stuck detection
@@ -603,6 +817,13 @@ class BrainNotifier extends StateNotifier<BrainState> {
         );
       }
     };
+
+    // Listen to Cognition state changes to keep BrainState's emotion in sync
+    _ref.listen<CognitionState>(cognitionProvider, (prev, next) {
+      if (next.activeEmotion != state.currentEmotion) {
+        state = state.copyWith(currentEmotion: next.activeEmotion);
+      }
+    });
   }
 
   /// Public — lets SkillExecutor post entries to the activity log
@@ -621,6 +842,7 @@ class BrainNotifier extends StateNotifier<BrainState> {
       currentEmotion: emotion,
       canvasContent: const CanvasContent(type: CanvasType.face),
     );
+    _ref.read(cognitionProvider.notifier).updateEmotion(emotion);
   }
 
   void setCanvasContent(CanvasContent content) {

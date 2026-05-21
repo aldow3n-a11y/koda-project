@@ -3,6 +3,10 @@
 #include <ArduinoJson.h>
 #include "motor.h"
 
+extern volatile bool collisionBrakeActive;
+extern void startEmotionTask(const char* emotion);
+extern void stopActiveEmotion();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CommandExecutor — parses BLE JSON payloads and drives the MotorDriver
 //
@@ -62,6 +66,9 @@ private:
     unsigned long _lastCmdMs = 0;
 
     String _runSingle(JsonObject obj) {
+        stopActiveEmotion();
+        collisionBrakeActive = false;
+
         const char* cmd   = obj["cmd"]   | "stop";
         int         speed = constrain((int)(obj["speed"] | 60), 0, 100);
         int         ms    = obj["ms"]    | 0;
@@ -73,7 +80,7 @@ private:
         else if (strcmp(cmd, "stop")     == 0)                               { _motor.brake();                          }
         else if (strcmp(cmd, "express")  == 0) {
             _motor.wakeup();
-            _motor.express(obj["emotion"] | "idle");
+            startEmotionTask(obj["emotion"] | "idle");
             return "{\"status\":\"ok\"}";
         }
         else if (strcmp(cmd, "trim")     == 0) {
@@ -88,32 +95,14 @@ private:
             return String("{\"status\":\"error\",\"msg\":\"unknown: ") + cmd + "\"}";
         }
 
-        // Timed command — auto-brake after ms, but poll LiDAR for collisions
+        // Timed command — auto-brake after ms
         if (ms > 0 && strcmp(cmd, "stop") != 0) {
-            const bool movingForward  = (strcmp(cmd, "forward") == 0);
             const unsigned long deadline = millis() + ms;
 
             while (millis() < deadline) {
                 delay(20);
-
-                // Only guard FORWARD movement.
-                // BACKWARD is a blindspot (phone holder blocks that LiDAR sector).
-                if (scanDist != nullptr && movingForward) {
-                    uint16_t minDist = 65535;
-                    // Check a ±25° arc dead ahead, offset by LIDAR_FORWARD_OFFSET_DEG
-                    // so that the guard checks the actual forward direction of the robot.
-                    for (int a = -25; a <= 25; a++) {
-                        int idx = (LIDAR_FORWARD_OFFSET_DEG + a + 360) % 360;
-                        if (scanDist[idx] > 0 && scanDist[idx] < minDist) {
-                            minDist = scanDist[idx];
-                        }
-                    }
-
-                    if (minDist < COLLISION_GUARD_MM) {
-                        _motor.brake();
-                        Serial.printf("[GUARD] Collision! %dmm ahead. Braking early.\n", minDist);
-                        return "{\"status\":\"collision\",\"dist_mm\":" + String(minDist) + "}";
-                    }
+                if (collisionBrakeActive) {
+                    return "{\"status\":\"collision\"}";
                 }
             }
             _motor.brake();

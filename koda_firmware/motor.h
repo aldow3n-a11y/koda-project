@@ -26,6 +26,8 @@ public:
         int rr = 99;
     };
 
+    volatile bool motorsActive = false;
+
     MotorDriver(
         uint8_t fl_in1, uint8_t fl_in2, uint8_t fl_pwm,
         uint8_t rl_in1, uint8_t rl_in2, uint8_t rl_pwm,
@@ -65,6 +67,7 @@ public:
     }
 
     void forward(int speed) {
+        motorsActive = true;
         _setWheel(_fl,  speed, _trim.fl);
         _setWheel(_fr,  speed, _trim.fr);
         _setWheel(_rl,  speed, _trim.rl);
@@ -72,6 +75,7 @@ public:
     }
 
     void backward(int speed) {
+        motorsActive = true;
         _setWheel(_fl, -speed, _trim.fl);
         _setWheel(_fr, -speed, _trim.fr);
         _setWheel(_rl, -speed, _trim.rl);
@@ -79,6 +83,7 @@ public:
     }
 
     void turnCW(int speed) {   // left fwd, right back
+        motorsActive = true;
         _setWheel(_fl,  speed, _trim.fl);
         _setWheel(_rl,  speed, _trim.rl);
         _setWheel(_fr, -speed, _trim.fr);
@@ -86,6 +91,7 @@ public:
     }
 
     void turnCCW(int speed) {  // right fwd, left back
+        motorsActive = true;
         _setWheel(_fl, -speed, _trim.fl);
         _setWheel(_rl, -speed, _trim.rl);
         _setWheel(_fr,  speed, _trim.fr);
@@ -93,11 +99,13 @@ public:
     }
 
     void coast() {
+        motorsActive = false;
         _setWheel(_fl, 0, 100); _setWheel(_fr, 0, 100);
         _setWheel(_rl, 0, 100); _setWheel(_rr, 0, 100);
     }
 
     void brake() {
+        motorsActive = false;
         WheelChannel* wheels[] = { &_fl, &_rl, &_fr, &_rr };
         for (auto* w : wheels) {
             digitalWrite(w->in1, HIGH);

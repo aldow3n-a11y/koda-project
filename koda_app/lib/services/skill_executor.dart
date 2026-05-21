@@ -24,6 +24,8 @@ typedef SetCanvasFn = void Function(CanvasContent content);
 typedef AnalyzeFrameFn = Future<List<String>> Function(String currentHeading);
 typedef GetObjectTrackingDataFn = ObjectTrackingData? Function();
 typedef GetCancelRequestedFn = bool Function();
+typedef GetTrackingEnabledFn = bool Function();
+typedef SetTrackingEnabledFn = void Function(bool enabled);
 
 /// Dispatches SkillAction items to handler functions.
 /// All dependencies are injected as callbacks to avoid circular imports.
@@ -48,6 +50,8 @@ class SkillExecutor {
   final AnalyzeFrameFn? onAnalyzeFrame;
   final GetObjectTrackingDataFn? getObjectTrackingData;
   final GetCancelRequestedFn? getCancelRequested;
+  final GetTrackingEnabledFn? getTrackingEnabled;
+  final SetTrackingEnabledFn? onSetTracking;
 
   /// Minimum safe distance in mm before a move is blocked.
   static const int _safetyDistanceMm = 250;
@@ -75,6 +79,8 @@ class SkillExecutor {
     this.onAnalyzeFrame,
     this.getObjectTrackingData,
     this.getCancelRequested,
+    this.getTrackingEnabled,
+    this.onSetTracking,
   });
 
   void resetLoopCount() => _loopCount = 0;
@@ -164,82 +170,89 @@ class SkillExecutor {
     final target = a.param('target', 'object');
     onLog('sys', 'Starting fast ML follow for: $target');
     
+    final wasTracking = getTrackingEnabled != null && getTrackingEnabled!();
+    if (onSetTracking != null) onSetTracking!(true);
+    
     int lostFrames = 0;
     int trackedFrames = 0;
     
-    while (getCancelRequested != null && !getCancelRequested!()) {
-      if (getObjectTrackingData == null) break;
-      final data = getObjectTrackingData!();
-      
-      if (data == null) {
-        lostFrames++;
-        trackedFrames = 0; // Reset consecutive frame counter
-        if (lostFrames > 30) { // ~3 seconds at 10 Hz
-           onLog('sys', 'Lost track of $target. Triggering LLM vision analysis.');
-           await onBle(KodaCmd.stop, 0, 0);
-           if (onAnalyzeFrame != null) {
-             final objects = await onAnalyzeFrame!('Forward');
-             final objStr = objects.isNotEmpty ? objects.join(', ') : 'nothing';
-             await onProcessInput('SYSTEM NOTIFICATION: I lost track of the $target. I am currently looking at: $objStr. Please ask the user where the $target went.', isLoopStep: false);
-           } else {
-             await onProcessInput('SYSTEM NOTIFICATION: I lost track of the $target while following. Please ask the user what to do next.', isLoopStep: false);
-           }
-           break;
+    try {
+      while (getCancelRequested != null && !getCancelRequested!()) {
+        if (getObjectTrackingData == null) break;
+        final data = getObjectTrackingData!();
+        
+        if (data == null) {
+          lostFrames++;
+          trackedFrames = 0; // Reset consecutive frame counter
+          if (lostFrames > 30) { // ~3 seconds at 10 Hz
+             onLog('sys', 'Lost track of $target. Triggering LLM vision analysis.');
+             await onBle(KodaCmd.stop, 0, 0);
+             if (onAnalyzeFrame != null) {
+               final objects = await onAnalyzeFrame!('Forward');
+               final objStr = objects.isNotEmpty ? objects.join(', ') : 'nothing';
+               await onProcessInput('SYSTEM NOTIFICATION: I lost track of the $target. I am currently looking at: $objStr. Please ask the user where the $target went.', isLoopStep: false);
+             } else {
+               await onProcessInput('SYSTEM NOTIFICATION: I lost track of the $target while following. Please ask the user what to do next.', isLoopStep: false);
+             }
+             break;
+          }
+          await Future.delayed(const Duration(milliseconds: 100));
+          continue;
+        }
+        
+        lostFrames = 0;
+        trackedFrames++;
+        final dx = data.offset.dx; 
+        final area = data.areaRatio; 
+
+        // Trigger 1: Proximity Lock (Object is very large/close)
+        if (area > 0.45) {
+          onLog('sys', 'Proximity trigger: caught up to $target.');
+          await onBle(KodaCmd.stop, 0, 0);
+          if (onAnalyzeFrame != null) {
+            final objects = await onAnalyzeFrame!('Forward');
+            final objStr = objects.isNotEmpty ? objects.join(', ') : 'nothing';
+            await onProcessInput('SYSTEM NOTIFICATION: I successfully navigated extremely close to the $target. I see: $objStr. Tell the user I caught up to it.', isLoopStep: false);
+          } else {
+            await onProcessInput('SYSTEM NOTIFICATION: I successfully navigated close to the $target. Tell the user.', isLoopStep: false);
+          }
+          break;
+        }
+
+        // Trigger 2: Time-based Lock (Tracked continuously for 10 seconds / ~100 frames)
+        if (trackedFrames > 100) {
+          trackedFrames = 0; // Reset to avoid spam
+          if (onAnalyzeFrame != null) {
+            onLog('sys', 'Time-based lock trigger: identifying tracked object in background...');
+            // Do not await to ensure the motor control loop doesn't pause!
+            onAnalyzeFrame!('Forward').then((objects) {
+              if (objects.isNotEmpty) {
+                final objStr = objects.join(', ');
+                onProcessInput('SYSTEM NOTIFICATION: While continuously following the $target, I analyzed the vision feed and identified the prominent objects as: $objStr. Mention this naturally if appropriate, but do not stop following.', isLoopStep: false);
+              }
+            });
+          }
+        }
+        
+        // Motor Steering Logic
+        if (dx > 3.0) {
+          await onBle(KodaCmd.turnCw, 55, 100);
+        } else if (dx < -3.0) {
+          await onBle(KodaCmd.turnCcw, 55, 100);
+        } else {
+          if (area < 0.1) {
+            await _safeMoveForward(60, 150);
+          } else if (area > 0.3) {
+            await onBle(KodaCmd.backward, 50, 150);
+          } else {
+            // Optimal distance, stop moving
+            await onBle(KodaCmd.stop, 0, 0);
+          }
         }
         await Future.delayed(const Duration(milliseconds: 100));
-        continue;
       }
-      
-      lostFrames = 0;
-      trackedFrames++;
-      final dx = data.offset.dx; 
-      final area = data.areaRatio; 
-
-      // Trigger 1: Proximity Lock (Object is very large/close)
-      if (area > 0.45) {
-        onLog('sys', 'Proximity trigger: caught up to $target.');
-        await onBle(KodaCmd.stop, 0, 0);
-        if (onAnalyzeFrame != null) {
-          final objects = await onAnalyzeFrame!('Forward');
-          final objStr = objects.isNotEmpty ? objects.join(', ') : 'nothing';
-          await onProcessInput('SYSTEM NOTIFICATION: I successfully navigated extremely close to the $target. I see: $objStr. Tell the user I caught up to it.', isLoopStep: false);
-        } else {
-          await onProcessInput('SYSTEM NOTIFICATION: I successfully navigated close to the $target. Tell the user.', isLoopStep: false);
-        }
-        break;
-      }
-
-      // Trigger 2: Time-based Lock (Tracked continuously for 10 seconds / ~100 frames)
-      if (trackedFrames > 100) {
-        trackedFrames = 0; // Reset to avoid spam
-        if (onAnalyzeFrame != null) {
-          onLog('sys', 'Time-based lock trigger: identifying tracked object in background...');
-          // Do not await to ensure the motor control loop doesn't pause!
-          onAnalyzeFrame!('Forward').then((objects) {
-            if (objects.isNotEmpty) {
-              final objStr = objects.join(', ');
-              onProcessInput('SYSTEM NOTIFICATION: While continuously following the $target, I analyzed the vision feed and identified the prominent objects as: $objStr. Mention this naturally if appropriate, but do not stop following.', isLoopStep: false);
-            }
-          });
-        }
-      }
-      
-      // Motor Steering Logic
-      if (dx > 3.0) {
-        await onBle(KodaCmd.turnCw, 55, 100);
-      } else if (dx < -3.0) {
-        await onBle(KodaCmd.turnCcw, 55, 100);
-      } else {
-        if (area < 0.1) {
-          await _safeMoveForward(60, 150);
-        } else if (area > 0.3) {
-          await onBle(KodaCmd.backward, 50, 150);
-        } else {
-          // Optimal distance, stop moving
-          await onBle(KodaCmd.stop, 0, 0);
-        }
-      }
-      await Future.delayed(const Duration(milliseconds: 100));
+    } finally {
+      if (onSetTracking != null) onSetTracking!(wasTracking);
     }
   }
 

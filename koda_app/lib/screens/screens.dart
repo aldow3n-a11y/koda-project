@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -229,6 +230,9 @@ class _BrainScreenState extends ConsumerState<BrainScreen> with WidgetsBindingOb
         selectedCamera, 
         ResolutionPreset.medium, 
         enableAudio: false,
+        imageFormatGroup: Platform.isAndroid 
+            ? ImageFormatGroup.nv21 
+            : ImageFormatGroup.bgra8888,
       );
       await _cameraController!.initialize();
       
