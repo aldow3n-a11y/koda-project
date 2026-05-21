@@ -440,7 +440,7 @@ class SlamService {
       final movedMm    = math.sqrt(dWorldX * dWorldX + dWorldY * dWorldY);
       final rotatedRad = dWorldH.abs();
 
-      if (movedMm > 20.0 || rotatedRad > 0.05) {
+      if (movedMm > 20.0 || rotatedRad > 0.05 || !isMoving) {
         final icp = IcpMatcher.matchToGrid(
           source: scan,
           initialX: pose.xMm,
@@ -453,9 +453,17 @@ class SlamService {
           pose.xMm += icp.dxMm;
           pose.yMm += icp.dyMm;
           
-          // Only apply ICP rotation if the robot has moved recently. 
+          final isCorrectionSignificant = icp.dThetaRad.abs() > 0.02 ||
+              icp.dxMm.abs() > 20.0 ||
+              icp.dyMm.abs() > 20.0;
+          
+          if (isCorrectionSignificant) {
+            _lastMoveTime = now;
+          }
+          
+          // Only apply ICP rotation if the robot has moved recently or the rotation correction is significant.
           // This prevents the map from constantly rotating when stationary.
-          if (DateTime.now().difference(_lastMoveTime).inMilliseconds < 500) {
+          if (isMoving || icp.dThetaRad.abs() > 0.02) {
             pose.heading += icp.dThetaRad;
           } else {
             // Heavily dampen stationary rotation noise to stop continuous drifting
@@ -481,7 +489,21 @@ class SlamService {
             final wDy = fallbackIcp.dxMm * math.sin(lh) + fallbackIcp.dyMm * math.cos(lh);
             pose.xMm    = _lastScanPose!.xMm + wDx;
             pose.yMm    = _lastScanPose!.yMm + wDy;
-            pose.heading = _lastScanPose!.heading + fallbackIcp.dThetaRad;
+            
+            final isCorrectionSignificant = fallbackIcp.dThetaRad.abs() > 0.02 ||
+                fallbackIcp.dxMm.abs() > 20.0 ||
+                fallbackIcp.dyMm.abs() > 20.0;
+                
+            if (isCorrectionSignificant) {
+              _lastMoveTime = now;
+            }
+
+            // Only apply fallback rotation if the robot has moved recently or the rotation correction is significant.
+            if (isMoving || fallbackIcp.dThetaRad.abs() > 0.02) {
+              pose.heading = _lastScanPose!.heading + fallbackIcp.dThetaRad;
+            } else {
+              pose.heading = _lastScanPose!.heading + fallbackIcp.dThetaRad * 0.01;
+            }
             pose.heading = (pose.heading + math.pi) % (2 * math.pi) - math.pi;
           }
         }
