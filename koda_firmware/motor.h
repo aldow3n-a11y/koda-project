@@ -26,7 +26,9 @@ public:
         int rr = 99;
     };
 
-    volatile bool motorsActive = false;
+    volatile bool motorsActive  = false;
+    volatile bool isTurning      = false;  // true during CW/CCW turns
+    volatile bool isMovingBack   = false;  // true during backward movement
 
     MotorDriver(
         uint8_t fl_in1, uint8_t fl_in2, uint8_t fl_pwm,
@@ -68,6 +70,8 @@ public:
 
     void forward(int speed) {
         motorsActive = true;
+        isTurning    = false;
+        isMovingBack = false;
         _setWheel(_fl,  speed, _trim.fl);
         _setWheel(_fr,  speed, _trim.fr);
         _setWheel(_rl,  speed, _trim.rl);
@@ -76,6 +80,8 @@ public:
 
     void backward(int speed) {
         motorsActive = true;
+        isTurning    = false;
+        isMovingBack = true;
         _setWheel(_fl, -speed, _trim.fl);
         _setWheel(_fr, -speed, _trim.fr);
         _setWheel(_rl, -speed, _trim.rl);
@@ -84,6 +90,8 @@ public:
 
     void turnCW(int speed) {   // left fwd, right back
         motorsActive = true;
+        isTurning    = true;
+        isMovingBack = false;
         _setWheel(_fl,  speed, _trim.fl);
         _setWheel(_rl,  speed, _trim.rl);
         _setWheel(_fr, -speed, _trim.fr);
@@ -92,6 +100,8 @@ public:
 
     void turnCCW(int speed) {  // right fwd, left back
         motorsActive = true;
+        isTurning    = true;
+        isMovingBack = false;
         _setWheel(_fl, -speed, _trim.fl);
         _setWheel(_rl, -speed, _trim.rl);
         _setWheel(_fr,  speed, _trim.fr);
@@ -100,12 +110,16 @@ public:
 
     void coast() {
         motorsActive = false;
+        isTurning    = false;
+        isMovingBack = false;
         _setWheel(_fl, 0, 100); _setWheel(_fr, 0, 100);
         _setWheel(_rl, 0, 100); _setWheel(_rr, 0, 100);
     }
 
     void brake() {
         motorsActive = false;
+        isTurning    = false;
+        isMovingBack = false;
         WheelChannel* wheels[] = { &_fl, &_rl, &_fr, &_rr };
         for (auto* w : wheels) {
             digitalWrite(w->in1, HIGH);

@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -585,10 +587,18 @@ class CognitionNotifier extends StateNotifier<CognitionState> {
     if (minDist < 25) {
       final now = DateTime.now();
       
+      // ── Reflex Race Condition Guard ─────────────────────────────────────
+      // If the LLM brain is already executing a turn/evasion command to handle
+      // this very obstacle, do NOT override it with a blanket STOP.
+      // The LLM command is the deliberate response; the reflex would cancel it.
+      final brain = _ref.read(brainProvider.notifier);
+      final reflexSuppressed = brain.isReflexSuppressed;
+      // ────────────────────────────────────────────────────────────────────
+
       // Prevent rapid alert loops (cooldown 5 seconds for voice alert)
       final bool canSpeakAlert = now.difference(_lastAlertTime).inSeconds > 5;
       
-      if (!state.isEmergencyActive || state.arousalLevel < 90) {
+      if (!reflexSuppressed && (!state.isEmergencyActive || state.arousalLevel < 90)) {
         state = state.copyWith(
           activeEmotion: RobotEmotion.surprised,
           arousalLevel: 95,
@@ -602,11 +612,10 @@ class CognitionNotifier extends StateNotifier<CognitionState> {
         );
       }
 
-      if (canSpeakAlert) {
+      if (canSpeakAlert && !reflexSuppressed) {
         _lastAlertTime = now;
         
         // If brain/agent mode is active, interrupt standard task and speak
-        final brain = _ref.read(brainProvider.notifier);
         if (brain.state.active) {
           brain.interruptAndProcess(
             'SYSTEM ALERT: Immediate obstacle collision threat detected at distance $minDist cm! '
@@ -741,18 +750,109 @@ class BrainNotifier extends StateNotifier<BrainState> {
   String _lastSummary = 'Idle';
   List<int>? _initialTaskImage;
 
+  /// When set, the cognition reflex STOP is suppressed until this time.
+  /// This prevents the emergency stop from cancelling deliberate LLM turn commands.
+  DateTime? _reflexSuppressedUntil;
+
+  /// Returns true if the LLM is actively executing a motor command that should
+  /// not be overridden by the reflexive emergency stop.
+  bool get isReflexSuppressed {
+    final until = _reflexSuppressedUntil;
+    if (until == null) return false;
+    return DateTime.now().isBefore(until);
+  }
+
   BrainNotifier(this._llm, this._tts, this._stt, this._bleNotifier, this._ctx, this._ref)
       : super(const BrainState()) {
     _skillExecutor = SkillExecutor(
       onBle: (cmd, speed, ms) async {
         // Suppress kidnap detection while motors are running
         _ref.read(imuServiceProvider).setMotorActive();
+        // ── Reflex Suppression ──────────────────────────────────────────────
+        // If the LLM is issuing a turn/evasion command, suppress the cognition
+        // layer's emergency STOP reflex for the duration of the maneuver.
+        // This prevents the reflex from racing against and cancelling the turn.
+        final isTurn = cmd == KodaCmd.turnCw || cmd == KodaCmd.turnCcw;
+        final isMove = cmd == KodaCmd.forward || cmd == KodaCmd.backward;
+        final isEvasion = isTurn || cmd == KodaCmd.backward;
+        if (isEvasion && ms > 0) {
+          _reflexSuppressedUntil = DateTime.now().add(Duration(milliseconds: ms + 600));
+        }
+
+        final slam = _ref.read(slamServiceProvider);
+        final startHeading = slam.pose.heading;
+        final startX = slam.pose.xMm;
+        final startY = slam.pose.yMm;
+        final startTime = DateTime.now();
+
         await _bleNotifier.sendCommand(MotorCommand(cmd: cmd, speed: speed, ms: ms));
         // Notify SLAM dead-reckoning of movement
         _ref.read(lidarProvider.notifier).notifyMotorCommand(
           cmd.name, speed, ms,
         );
-        if (ms > 0) await Future.delayed(Duration(milliseconds: ms + 80));
+        if (ms > 0) {
+          await Future.delayed(Duration(milliseconds: ms + 80));
+
+          // Calculate actual delta time
+          final actualDt = DateTime.now().difference(startTime).inMilliseconds / 1000.0;
+          final settings = _ref.read(settingsProvider);
+          const emaAlpha = 0.15;
+
+          if (isTurn && settings.useImuHeading && actualDt > 0.05) {
+            final spd = settings.mmPerSecAt100pct * speed / 100.0;
+            final expectedDeltaRad = (spd / (settings.wheelbaseMm / 2.0)) * actualDt;
+            final isCw = cmd == KodaCmd.turnCw;
+            final directionSign = isCw ? -1.0 : 1.0;
+            final uncalibratedExpectedDelta = expectedDeltaRad * directionSign;
+
+            final endHeading = slam.pose.heading;
+            double actualDelta = endHeading - startHeading;
+            actualDelta = (actualDelta + math.pi) % (2.0 * math.pi) - math.pi;
+
+            if (uncalibratedExpectedDelta.abs() > 0.05 && actualDelta.abs() > 0.05) {
+              final observedFactor = actualDelta / uncalibratedExpectedDelta;
+              // Make sure direction aligns (observedFactor > 0) and is reasonable
+              if (observedFactor > 0.1 && observedFactor < 2.5) {
+                final currentFactor = settings.turnCalibrationFactor;
+                final newFactor = currentFactor * (1.0 - emaAlpha) + observedFactor * emaAlpha;
+                final clampedFactor = newFactor.clamp(0.1, 2.5);
+
+                _addLog('sys', '[FEEDBACK] Turn calibration: expected=${uncalibratedExpectedDelta.toStringAsFixed(3)}rad, actual=${actualDelta.toStringAsFixed(3)}rad. Observed factor=${observedFactor.toStringAsFixed(3)}. Auto-tuning turnCalibrationFactor from ${currentFactor.toStringAsFixed(3)} to ${clampedFactor.toStringAsFixed(3)}');
+
+                await _ref.read(settingsProvider.notifier).updateField(
+                  (s) => s.copyWith(turnCalibrationFactor: clampedFactor),
+                );
+              }
+            }
+          } else if (isMove && actualDt > 0.05) {
+            final isSlamActive = slam.mode == SlamMode.mapping || slam.mode == SlamMode.navigation;
+            final isSlamValid = isSlamActive && !slam.isLost && slam.latestScan != null;
+
+            final spd = settings.mmPerSecAt100pct * speed / 100.0;
+            final expectedMoved = spd * actualDt;
+
+            final endX = slam.pose.xMm;
+            final endY = slam.pose.yMm;
+            final dx = endX - startX;
+            final dy = endY - startY;
+            final actualMoved = math.sqrt(dx * dx + dy * dy);
+
+            if (isSlamValid && expectedMoved > 50.0 && actualMoved > 10.0) {
+              final observedSpeed = (actualMoved / actualDt) / (speed / 100.0);
+              if (observedSpeed >= 100.0 && observedSpeed <= 600.0) {
+                final currentSpeed = settings.mmPerSecAt100pct;
+                final newSpeed = currentSpeed * (1.0 - emaAlpha) + observedSpeed * emaAlpha;
+                final clampedSpeed = newSpeed.clamp(100.0, 600.0);
+
+                _addLog('sys', '[FEEDBACK] Move calibration: expectedMoved=${expectedMoved.toStringAsFixed(1)}mm, actualMoved=${actualMoved.toStringAsFixed(1)}mm. Observed speed at 100%=${observedSpeed.toStringAsFixed(1)}mm/s. Auto-tuning mmPerSecAt100pct from ${currentSpeed.toStringAsFixed(1)} to ${clampedSpeed.toStringAsFixed(1)}');
+
+                await _ref.read(settingsProvider.notifier).updateField(
+                  (s) => s.copyWith(mmPerSecAt100pct: clampedSpeed),
+                );
+              }
+            }
+          }
+        }
       },
       onSpeak: (text) => _tts.speak(text),
       onLog: (type, msg) => addLog(type, msg),
@@ -803,6 +903,10 @@ class BrainNotifier extends StateNotifier<BrainState> {
       getTrackingEnabled: () => _ref.read(faceTrackingEnabledProvider),
       onSetTracking: (enabled) {
         _ref.read(faceTrackingEnabledProvider.notifier).state = enabled;
+      },
+      onSetLastSummary: (summary) {
+        _lastSummary = summary;
+        _addLog('sys', 'Action outcome: $summary');
       },
     );
 
@@ -1086,11 +1190,14 @@ class BrainNotifier extends StateNotifier<BrainState> {
 
               if (!camera.value.isTakingPicture) {
                 final xfile = await camera.takePicture();
-                final rawBytes = await xfile.readAsBytes();
                 
-                // Run image compression in a background isolate to keep UI responsive and fast
-                imageBytes = await compute(_resizeAndCompressImage, rawBytes);
-                _addLog('sys', 'Vision: Compressed ${rawBytes.length ~/ 1024}KB -> ${(imageBytes?.length ?? 0) ~/ 1024}KB');
+                // Run image read and compression in a background isolate to keep UI responsive and fast
+                imageBytes = await compute(_readAndCompressImage, xfile.path);
+                
+                // Delete the temporary camera file to prevent storage/inode exhaustion
+                try { File(xfile.path).deleteSync(); } catch (_) {}
+                
+                _addLog('sys', 'Vision: Compressed to ${(imageBytes?.length ?? 0) ~/ 1024}KB');
               } else {
                 _addLog('sys', 'Camera busy — skipping image');
               }
@@ -1102,20 +1209,26 @@ class BrainNotifier extends StateNotifier<BrainState> {
           _addLog('sys', 'Text-only query: Skipping camera capture.');
         }
 
-        // Multi-Image state comparison for Robotics-ER
+        // Read settings early — needed for isRoboticsER check below
+        final settings = _ref.read(settingsProvider);
+
+        // Multi-Image state comparison for Robotics-ER (Before/After)
         final List<List<int>> images = [];
         if (imageBytes != null) {
-          _initialTaskImage ??= imageBytes;
-          if (_initialTaskImage != null) {
+          final bool isRoboticsER = settings.model.toLowerCase().contains('robotics-er');
+          if (isRoboticsER && _initialTaskImage != null && currentIsLoopStep) {
+            // Send Previous image and Current image
             images.add(_initialTaskImage!);
-          }
-          if (currentIsLoopStep && imageBytes != _initialTaskImage) {
-            // If we are in a loop, imageBytes is the NEW state.
-            // We already added _initialTaskImage as the first image.
             images.add(imageBytes);
             visionContext = (visionContext ?? '') + 
-                '\nMULTI-VIEW MODE: Image 1 is the STARTING state. Image 2 is the CURRENT state.';
+                '\nMULTI-VIEW MODE: Image 1 is BEFORE movement. Image 2 is AFTER movement (Current view).';
+          } else {
+            // First step, just send the current image
+            images.add(imageBytes);
           }
+          
+          // Update the "before" image for the NEXT loop iteration
+          _initialTaskImage = imageBytes;
         }
 
         // ─── ROS-Style Model Context Protocol (MCP) Prompt Construction ───
@@ -1132,7 +1245,6 @@ class BrainNotifier extends StateNotifier<BrainState> {
         final lidarState = _ref.read(lidarProvider);
         final slam = _ref.read(slamServiceProvider);
         final pose = slam.poseContext;
-        final settings = _ref.read(settingsProvider);
         
         final String stateSnapshot = '''
 ### INTERNAL STATE OF MIND
@@ -1148,10 +1260,47 @@ class BrainNotifier extends StateNotifier<BrainState> {
 - Last Action Outcome: $_lastSummary
 
 ### LIDAR RANGE REPORT (Obstacle Sensors)
-- FRONT: ${lidarState.frontMm != null ? '${(lidarState.frontMm! / 10).round()}cm' : 'CLEAR'}
-- LEFT:  ${lidarState.leftMm  != null ? '${(lidarState.leftMm!  / 10).round()}cm' : 'CLEAR'}
-- RIGHT: ${lidarState.rightMm != null ? '${(lidarState.rightMm! / 10).round()}cm' : 'CLEAR'}
+⚠️ LIDAR IS GROUND TRUTH. Visual impressions of walls are NOT reliable for distance. Always use LIDAR cm values below for navigation decisions.
+
+${() {
+  final fCm = lidarState.frontMm != null ? (lidarState.frontMm! / 10).round() : null;
+  final lCm = lidarState.leftMm  != null ? (lidarState.leftMm!  / 10).round() : null;
+  final rCm = lidarState.rightMm != null ? (lidarState.rightMm! / 10).round() : null;
+
+  String verdict(int? cm) {
+    if (cm == null) return 'CLEAR ✅ (no obstacle detected — SAFE to move)';
+    if (cm >= 50) return '$cm cm ✅ SAFE (>50cm — move OR turn freely)';
+    if (cm >= 25) return '$cm cm ⚠️ CAUTION (25–50cm — SAFE to turn, do NOT move forward)';
+    return '$cm cm 🚫 BLOCKED (<25cm — MUST turn or back up)';
+  }
+
+  final fv = verdict(fCm);
+  final lv = verdict(lCm);
+  final rv = verdict(rCm);
+
+  // Pre-compute recommended action
+  String nav;
+  if (fCm == null || fCm >= 50) {
+    nav = '✅ MOVE FORWARD — path is clear (${fCm == null ? "no obstacle" : "${fCm}cm"})';
+  } else if (fCm >= 25) {
+    final bestTurn = (lCm ?? 9999) >= (rCm ?? 9999) ? 'CCW (left is more open)' : 'CW (right is more open)';
+    nav = '⚠️ CAUTION AHEAD — DO NOT move forward. TURN $bestTurn to find a clear path.';
+  } else {
+    final bestTurn = (lCm ?? 9999) >= (rCm ?? 9999) ? 'CCW (left is more open)' : 'CW (right is more open)';
+    nav = '🚫 BLOCKED — Back up or TURN $bestTurn immediately.';
+  }
+
+  return '''- FRONT: $fv
+- LEFT:  $lv
+- RIGHT: $rv
 - BACK:  BLINDSPOT (Phone holder blocks sensor)
+
+### ⚡ LIDAR NAVIGATION DIRECTIVE (FOLLOW THIS — override visual impressions)
+$nav
+RULE: A wall visible in the camera image does NOT mean it is close. Trust LIDAR cm values ONLY.
+RULE: If LIDAR says ≥50cm, the path is SAFE — move boldly, do NOT back up.
+RULE: Only back up if LIDAR front is <25cm AND both sides are also blocked.''';
+}()}
 
 ### CONVERSATION CONTEXT
 ${historyStr.isEmpty ? "No recent conversation." : historyStr}
@@ -1160,10 +1309,10 @@ ${historyStr.isEmpty ? "No recent conversation." : historyStr}
 - Model: Gemini Robotics-ER 1.6
 - Thinking Budget: ${settings.thinkingBudget} tokens
 - Task Goal: ${currentInput}
-- Vision Capability: ${images.isEmpty ? 'DISABLED (No image sent. Rely ENTIRELY on Coordinates and Lidar)' : 'ENABLED (Normalized Pointing & Bounding Boxes)'}
+- Vision Capability: ${images.isEmpty ? 'DISABLED (No image sent. Rely ENTIRELY on Coordinates and Lidar)' : 'ENABLED (Use for object ID only — use LIDAR for distance/clearance)'}
 ''';
 
-        final isRoboticsER = settings.model.contains('robotics-er');
+        final isRoboticsER = settings.model.toLowerCase().contains('robotics-er');
 
         // Build the dynamic system prompt by injecting the state into the static soul/skills/memory
         String dynamicSystemPrompt = '$_systemPrompt\n\n$stateSnapshot';
@@ -1185,7 +1334,7 @@ ${historyStr.isEmpty ? "No recent conversation." : historyStr}
 
         if (lidarState.isReceiving) {
           dynamicSystemPrompt +=
-              '\nCRITICAL COLLISION RULE: DO NOT use `move` if distance < 25cm! If blocked, you MUST `turn`.';
+              '\nCRITICAL: LIDAR IS AUTHORITATIVE FOR DISTANCE. Camera vision is for object identification ONLY — never for judging distance or clearance.';
           dynamicSystemPrompt +=
               '\nCONFIDENCE RULE: If clearance > 100cm, you MUST move for at least 1200ms. If clearance is CLEAR, move for 2000ms+ and speed 85.';
         }
@@ -1276,8 +1425,10 @@ ${historyStr.isEmpty ? "No recent conversation." : historyStr}
     try {
       if (!camera.value.isTakingPicture) {
         final xfile = await camera.takePicture();
-        final rawBytes = await xfile.readAsBytes();
-        final imageBytes = await compute(_resizeAndCompressImage, rawBytes);
+        
+        // Use the updated background reader/compressor
+        final imageBytes = await compute(_readAndCompressImage, xfile.path);
+        try { File(xfile.path).deleteSync(); } catch (_) {}
 
         // Convert the robot's heading from radians to cardinal direction
         final pose = _ref.read(slamServiceProvider).poseContext;
@@ -1315,14 +1466,16 @@ final brainProvider = StateNotifierProvider<BrainNotifier, BrainState>((ref) {
   );
 });
 
-/// Top-level helper to resize and compress captured photos in a background isolate.
-List<int> _resizeAndCompressImage(List<int> bytes) {
+/// Top-level helper to read, resize, and compress captured photos in a background isolate.
+List<int> _readAndCompressImage(String path) {
   try {
-    final original = img.decodeImage(Uint8List.fromList(bytes));
+    final bytes = File(path).readAsBytesSync();
+    final original = img.decodeImage(bytes);
     if (original == null) return bytes;
-    final resized = img.copyResize(original, width: 512);
-    return img.encodeJpg(resized, quality: 75);
+    // Compress to 384px to save memory and processing time
+    final resized = img.copyResize(original, width: 384);
+    return img.encodeJpg(resized, quality: 70);
   } catch (_) {
-    return bytes;
+    return [];
   }
 }

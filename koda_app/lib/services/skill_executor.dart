@@ -13,6 +13,7 @@ typedef GetIsConnectedFn = bool Function();
 typedef GetMemoryCountFn = int Function();
 typedef SetEmotionFn = void Function(RobotEmotion emotion);
 typedef SaveMemoryFn = Future<void> Function(String fact);
+typedef SetLastSummaryFn = void Function(String summary);
 
 /// Returns the obstacle distance in mm for a given direction ('forward','backward','left','right').
 /// Returns null if no obstacle detected (CLEAR).
@@ -52,12 +53,12 @@ class SkillExecutor {
   final GetCancelRequestedFn? getCancelRequested;
   final GetTrackingEnabledFn? getTrackingEnabled;
   final SetTrackingEnabledFn? onSetTracking;
+  final SetLastSummaryFn? onSetLastSummary;
 
   /// Minimum safe distance in mm before a move is blocked.
   static const int _safetyDistanceMm = 250;
 
   int _loopCount = 0;
-  String _lastTurnDir = 'ccw';
 
   SkillExecutor({
     required this.onBle,
@@ -81,6 +82,7 @@ class SkillExecutor {
     this.getCancelRequested,
     this.getTrackingEnabled,
     this.onSetTracking,
+    this.onSetLastSummary,
   });
 
   void resetLoopCount() => _loopCount = 0;
@@ -374,20 +376,11 @@ class SkillExecutor {
     if (dir == 'forward') {
       final rangeMm = getLidarRange('forward');
       if (rangeMm != null && rangeMm < _safetyDistanceMm) {
-        onLog('err', '[SAFETY] Blocked! forward ${rangeMm}mm < ${_safetyDistanceMm}mm. Auto-turning.');
-        await onSpeak('Whoa, too close! Let me turn.');
-        final leftMm  = getLidarRange('left')  ?? 9999;
-        final rightMm = getLidarRange('right') ?? 9999;
-        
-        // Pick wider path, or continue last turn direction if similar
-        final turnDir = (leftMm - rightMm).abs() < 150 
-            ? _lastTurnDir 
-            : (leftMm > rightMm ? 'ccw' : 'cw');
-        
-        _lastTurnDir = turnDir;
-        final turnCmd = turnDir == 'ccw' ? KodaCmd.turnCcw : KodaCmd.turnCw;
-        onLog('cmd', '[SAFETY] Auto-turn $turnDir (L:${leftMm}mm R:${rightMm}mm)');
-        await onBle(turnCmd, 55, 700);
+        onLog('err', '[SAFETY] Blocked! forward ${rangeMm}mm < ${_safetyDistanceMm}mm. Skipping.');
+        await onSpeak('Blocked.');
+        if (onSetLastSummary != null) {
+          onSetLastSummary!('Action failed: move forward was blocked by an obstacle (${(rangeMm / 10).round()}cm ahead)');
+        }
         return;
       }
     }
@@ -396,6 +389,9 @@ class SkillExecutor {
     final cmd = dir == 'backward' ? KodaCmd.backward : KodaCmd.forward;
     onLog('cmd', 'move $dir speed:$speed ms:$ms');
     await onBle(cmd, speed, ms);
+    if (onSetLastSummary != null) {
+      onSetLastSummary!('Action succeeded: move $dir completed.');
+    }
   }
 
   Future<void> _turn(SkillAction a) async {
@@ -406,6 +402,9 @@ class SkillExecutor {
     final cmd = dir == 'ccw' ? KodaCmd.turnCcw : KodaCmd.turnCw;
     onLog('cmd', 'turn $dir speed:$speed ms:$ms');
     await onBle(cmd, speed, ms);
+    if (onSetLastSummary != null) {
+      onSetLastSummary!('Action succeeded: turn $dir completed.');
+    }
   }
 
   Future<void> _listen(SkillAction a) async {
@@ -473,8 +472,14 @@ class SkillExecutor {
     if (!ok) {
       onLog('err', 'Failed to plan path to X:$x, Y:$y');
       await onSpeak("I can't find a path to those coordinates. It might be blocked.");
+      if (onSetLastSummary != null) {
+        onSetLastSummary!('Action failed: drive_to X:$x, Y:$y failed. No path found.');
+      }
     } else {
       onLog('sys', 'Path planned. Executing…');
+      if (onSetLastSummary != null) {
+        onSetLastSummary!('Action succeeded: path to X:$x, Y:$y planned and execution started.');
+      }
     }
   }
 

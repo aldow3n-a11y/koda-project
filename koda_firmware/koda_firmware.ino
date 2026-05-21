@@ -52,7 +52,7 @@
 #define BLINK_INTERVAL    800
 #define LDS_PKT_SIZE      34
 #define LDS_SAMPLES       8
-#define LIDAR_DIST_MIN    100
+#define LIDAR_DIST_MIN    130  // Mask out the phone holder (< 13cm)
 #define LIDAR_DIST_MAX    6000
 #define LIDAR_SWEEP_MS    350
 
@@ -94,7 +94,6 @@ uint16_t rawAngleMin = 0xFFFF;
 uint16_t rawAngleMax = 0;
 
 // FreeRTOS Synchronization
-SemaphoreHandle_t lidarMutex = nullptr;
 volatile bool collisionBrakeActive = false;
 
 // Non-blocking Emotion Task Handle & Data
@@ -154,7 +153,7 @@ void parseLdsPacket(uint8_t* p) {
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 void setLedColor(uint8_t r, uint8_t g, uint8_t b) {
-    neopixelWrite(LED_PIN, r, g, b);
+    rgbLedWrite(LED_PIN, r, g, b);
 }
 void notifyStatus(const String& json) {
     if (statusChar && bleConnected) {
@@ -254,238 +253,17 @@ class CmdCallbacks : public NimBLECharacteristicCallbacks {
     }
 };
 
-// ─── CORE 0 TASKS ────────────────────────────────────────────────────────────
-void lidarTaskFunc(void* pvParameters) {
-    while (true) {
-        while (LidarSerial.available() > 0) {
-            uint8_t b = LidarSerial.read();
-            if (lidarMutex != nullptr && xSemaphoreTake(lidarMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                if (!ldsSynced) {
-                    ldsBuf[0] = ldsBuf[1];
-                    ldsBuf[1] = ldsBuf[2];
-                    ldsBuf[2] = ldsBuf[3];
-                    ldsBuf[3] = b;
-                    if (ldsBuf[0] == 0x55 && ldsBuf[1] == 0xAA &&
-                        ldsBuf[2] == 0x03 && ldsBuf[3] == 0x08) {
-                        ldsBufIdx = 4;
-                        ldsSynced = true;
-                    }
-                } else {
-                    ldsBuf[ldsBufIdx++] = b;
-                    if (ldsBufIdx >= LDS_PKT_SIZE) {
-                        parseLdsPacket(ldsBuf);
-                        ldsBufIdx = 0;
-                        ldsSynced = false;
-                        ldsBuf[0] = ldsBuf[1] = ldsBuf[2] = ldsBuf[3] = 0;
-                    }
-                }
-                xSemaphoreGive(lidarMutex);
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-}
-
-void safetyTaskFunc(void* pvParameters) {
-    while (true) {
-        uint16_t frontMin = 0xFFFF;
-        if (lidarMutex != nullptr && xSemaphoreTake(lidarMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-            frontMin = getArcMin(scanDist, CommandExecutor::LIDAR_FORWARD_OFFSET_DEG, 25);
-            xSemaphoreGive(lidarMutex);
-        }
-
-        if (motor.motorsActive && frontMin < CommandExecutor::COLLISION_GUARD_MM) {
-            motor.brake();
-            collisionBrakeActive = true;
-            stopActiveEmotion();
-            notifyStatus("{\"status\":\"collision\",\"dist_mm\":" + String(frontMin) + "}");
-            Serial.printf("[SAFETY] Collision! %dmm ahead. Braked.\n", frontMin);
-        }
-        vTaskDelay(pdMS_TO_TICKS(20)); // 50 Hz Safety Loop
-    }
-}
-
-void wakeNetTaskFunc(void* pvParameters) {
-    while (true) {
-        // Placeholder for WakeNet voice/word keyword task processing on Core 0
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
-
-// ─── CORE 1 TASKS ────────────────────────────────────────────────────────────
-void bleTaskFunc(void* pvParameters) {
-    unsigned long lastSweep = 0;
-    while (true) {
-        // ── Watchdog ─────────────────────────────────────────────────────────
-        if (bleConnected && executor.watchdogExpired(WATCHDOG_TIMEOUT)) {
-            motor.brake();
-            setLedColor(40, 0, 0);
-            notifyStatus("{\"status\":\"watchdog\",\"msg\":\"timeout\"}");
-            executor.resetWatchdog();
-        }
-
-        // ── Sweep report every LIDAR_SWEEP_MS ────────────────────────────────
-        unsigned long now = millis();
-        if (now - lastSweep >= LIDAR_SWEEP_MS) {
-            int validCount = 0;
-            uint16_t minD = 0xFFFF;
-            int minAngle = 0;
-            uint16_t tempScan[360];
-
-            if (lidarMutex != nullptr && xSemaphoreTake(lidarMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                memcpy(tempScan, scanDist, sizeof(scanDist));
-                xSemaphoreGive(lidarMutex);
-            } else {
-                memset(tempScan, 0, sizeof(tempScan));
-            }
-
-            for (int i = 0; i < 360; i++) {
-                if (tempScan[i] == 0) continue;
-                validCount++;
-                if (tempScan[i] < minD) { minD = tempScan[i]; minAngle = i; }
-            }
-            if (minD == 0xFFFF) minD = 0;
-
-            // ── Temporal Stability Filter (The Brain Filter) ──
-            for (int i = 0; i < 360; i++) {
-                frameBuffer[currentFrameIdx][i] = tempScan[i];
-            }
-            
-            int stableCount = 0;
-            for (int i = 0; i < 360; i++) {
-                if (tempScan[i] == 0) continue;
-                int appearanceCount = 0;
-                for (int f = 0; f < STABILITY_FRAMES; f++) {
-                    uint16_t historicDist = frameBuffer[f][i];
-                    if (historicDist > 0 && abs((int)historicDist - (int)tempScan[i]) < STABILITY_TOLERANCE_MM) {
-                        appearanceCount++;
-                    }
-                }
-                if (appearanceCount < 3) {
-                    tempScan[i] = 0;
-                } else {
-                    stableCount++;
-                }
-            }
-            currentFrameIdx = (currentFrameIdx + 1) % STABILITY_FRAMES;
-
-            Serial.printf("[LIDAR] pkts:%lu pts:%d stable:%d closest:%dmm @%ddeg raw:[%u-%u]=%.0f-%.0fdeg\n",
-                parsedPackets, validCount, stableCount, minD, minAngle,
-                rawAngleMin, rawAngleMax,
-                rawAngleMin == 0xFFFF ? 0 : (((rawAngleMin & 0x7FFF) - 0x2000) * 0.01f),
-                rawAngleMax == 0 ? 0 : (((rawAngleMax & 0x7FFF) - 0x2000) * 0.01f));
-
-            // BLE — push raw angle+distance binary pairs
-            if (bleConnected && stableCount > 0) {
-                uint8_t chunk[180];
-                int chunkIdx = 0;
-                for (int i = 0; i < 360; i++) {
-                    if (tempScan[i] == 0) continue;
-                    chunk[chunkIdx++] = i & 0xFF;
-                    chunk[chunkIdx++] = (i >> 8) & 0xFF;
-                    chunk[chunkIdx++] = tempScan[i] & 0xFF;
-                    chunk[chunkIdx++] = (tempScan[i] >> 8) & 0xFF;
-                    if (chunkIdx >= 176) {
-                        lidarChar->setValue(chunk, chunkIdx);
-                        lidarChar->notify();
-                        chunkIdx = 0;
-                        vTaskDelay(pdMS_TO_TICKS(30)); // delay between chunks to prevent MTU drop
-                    }
-                }
-                if (chunkIdx > 0) {
-                    lidarChar->setValue(chunk, chunkIdx);
-                    lidarChar->notify();
-                }
-            }
-
-            rawAngleMin = 0xFFFF; rawAngleMax = 0;
-            if (lidarMutex != nullptr && xSemaphoreTake(lidarMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                clearScan();
-                xSemaphoreGive(lidarMutex);
-            }
-            lastSweep = now;
-        }
-
-        // ── Idle blink ───────────────────────────────────────────────────────
-        static unsigned long lastBlink = 0;
-        if (!bleConnected && millis() - lastBlink >= BLINK_INTERVAL) {
-            lastBlink = millis();
-            ledState = !ledState;
-            setLedColor(ledState ? 10 : 0, ledState ? 10 : 0, 0);
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-}
-
-void bodyStateTaskFunc(void* pvParameters) {
-    while (true) {
-        uint16_t frontMin = 0xFFFF;
-        uint16_t leftMin = 0xFFFF;
-        uint16_t rightMin = 0xFFFF;
-
-        if (lidarMutex != nullptr && xSemaphoreTake(lidarMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            frontMin = getArcMin(scanDist, CommandExecutor::LIDAR_FORWARD_OFFSET_DEG, 25);
-            leftMin = getArcMin(scanDist, (CommandExecutor::LIDAR_FORWARD_OFFSET_DEG + 90) % 360, 25);
-            rightMin = getArcMin(scanDist, (CommandExecutor::LIDAR_FORWARD_OFFSET_DEG - 90 + 360) % 360, 25);
-            xSemaphoreGive(lidarMutex);
-        }
-
-        uint8_t front_cm = (frontMin == 0xFFFF) ? 255 : constr_cm(frontMin / 10);
-        uint8_t left_cm = (leftMin == 0xFFFF) ? 255 : constr_cm(leftMin / 10);
-        uint8_t right_cm = (rightMin == 0xFFFF) ? 255 : constr_cm(rightMin / 10);
-
-        bool isMoving = motor.motorsActive;
-        bool isObstacleFront = (front_cm < 25);
-        bool isObstacleLeft = (left_cm < 25);
-        bool isObstacleRight = (right_cm < 25);
-
-        uint8_t mood = 0;     // Calm
-        uint8_t arousal = 15;  // Low/resting arousal
-
-        if (isObstacleFront || isObstacleLeft || isObstacleRight) {
-            mood = 2;         // Startled/Agitated
-            arousal = 95;     // High arousal due to close obstacle
-        } else if (isMoving) {
-            mood = 1;         // Active/Moving
-            arousal = 60;     // Moderate arousal
-        }
-
-        uint16_t flags = 0;
-        if (isMoving)        flags |= (1 << 0);
-        if (isObstacleFront) flags |= (1 << 1);
-        if (isObstacleLeft)  flags |= (1 << 2);
-        if (isObstacleRight) flags |= (1 << 3);
-
-        KodaBodyPacket packet;
-        packet.body_mood = mood;
-        packet.arousal = arousal;
-        packet.front_cm = front_cm;
-        packet.left_cm = left_cm;
-        packet.right_cm = right_cm;
-        packet.flags = flags;
-
-        if (bleConnected && bodyChar != nullptr) {
-            bodyChar->setValue((uint8_t*)&packet, sizeof(packet));
-            bodyChar->notify();
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
-}
-
 // ─── SETUP ───────────────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
     delay(500);
     clearScan();
 
-    lidarMutex = xSemaphoreCreateMutex();
-
     pinMode(21, OUTPUT);
     digitalWrite(21, HIGH);
     setLedColor(50, 0, 50);
 
+    LidarSerial.setRxBufferSize(1024);
     LidarSerial.begin(115200, SERIAL_8N1, LIDAR_RX_PIN, LIDAR_TX_PIN);
     motor.begin();
     executor.scanDist = scanDist; // Give guard loop live access to LiDAR data
@@ -526,18 +304,194 @@ void setup() {
     Serial.println("[KODA] LiDAR:  GPIO8 RX, UART2, 115200");
     Serial.println("═══════════════════════════════════════════");
 
-    // Create FreeRTOS Tasks
-    xTaskCreatePinnedToCore(lidarTaskFunc,     "lidar",     4096, nullptr, 5, nullptr, 0);
-    xTaskCreatePinnedToCore(safetyTaskFunc,    "safety",    2048, nullptr, 5, nullptr, 0);
-    xTaskCreatePinnedToCore(wakeNetTaskFunc,   "wakeNet",   2048, nullptr, 3, nullptr, 0);
-    xTaskCreatePinnedToCore(bleTaskFunc,       "ble",       4096, nullptr, 3, nullptr, 1);
-    xTaskCreatePinnedToCore(bodyStateTaskFunc, "bodyState", 2048, nullptr, 1, nullptr, 1);
-
     setLedColor(0, 50, 0); delay(200);
     setLedColor(10, 10, 0);
 }
 
 // ─── LOOP ────────────────────────────────────────────────────────────────────
 void loop() {
-    vTaskDelete(NULL); // Deletes the loop task itself to yield resources
+    unsigned long now = millis();
+
+    // ── Watchdog ─────────────────────────────────────────────────────────────
+    if (bleConnected && executor.watchdogExpired(WATCHDOG_TIMEOUT)) {
+        motor.brake();
+        setLedColor(40, 0, 0);
+        notifyStatus("{\"status\":\"watchdog\",\"msg\":\"timeout\"}");
+        executor.resetWatchdog();
+    }
+
+    // ── LiDAR Parser ─────────────────────────────────────────────────────────
+    while (LidarSerial.available() > 0) {
+        uint8_t b = LidarSerial.read();
+        if (!ldsSynced) {
+            ldsBuf[0] = ldsBuf[1];
+            ldsBuf[1] = ldsBuf[2];
+            ldsBuf[2] = ldsBuf[3];
+            ldsBuf[3] = b;
+            if (ldsBuf[0] == 0x55 && ldsBuf[1] == 0xAA &&
+                ldsBuf[2] == 0x03 && ldsBuf[3] == 0x08) {
+                ldsBufIdx = 4;
+                ldsSynced = true;
+            }
+        } else {
+            ldsBuf[ldsBufIdx++] = b;
+            if (ldsBufIdx >= LDS_PKT_SIZE) {
+                parseLdsPacket(ldsBuf);
+                ldsBufIdx = 0;
+                ldsSynced = false;
+                ldsBuf[0] = ldsBuf[1] = ldsBuf[2] = ldsBuf[3] = 0;
+            }
+        }
+    }
+
+    // ── Safety Collision Guard (50 Hz) ──────────────────────────────────────
+    // Only guard FORWARD movement. Turns and backward are evasive maneuvers —
+    // braking them mid-execution is the race condition that prevents avoidance.
+    static unsigned long lastSafety = 0;
+    if (now - lastSafety >= 20) {
+        bool isMovingForward = motor.motorsActive && !motor.isTurning && !motor.isMovingBack;
+        if (isMovingForward) {
+            uint16_t frontMin = getArcMin(scanDist, CommandExecutor::LIDAR_FORWARD_OFFSET_DEG, 25);
+            if (frontMin < CommandExecutor::COLLISION_GUARD_MM) {
+                motor.brake();
+                collisionBrakeActive = true;
+                stopActiveEmotion();
+                notifyStatus("{\"status\":\"collision\",\"dist_mm\":" + String(frontMin) + "}");
+                Serial.printf("[SAFETY] Collision! %dmm ahead. Braked.\n", frontMin);
+            }
+        }
+        lastSafety = now;
+    }
+
+    // ── Sweep report every LIDAR_SWEEP_MS ────────────────────────────────────
+    static unsigned long lastSweep = 0;
+    if (now - lastSweep >= LIDAR_SWEEP_MS) {
+        int validCount = 0;
+        uint16_t minD = 0xFFFF;
+        int minAngle = 0;
+        uint16_t tempScan[360];
+
+        memcpy(tempScan, scanDist, sizeof(scanDist));
+
+        for (int i = 0; i < 360; i++) {
+            if (tempScan[i] == 0) continue;
+            validCount++;
+            if (tempScan[i] < minD) { minD = tempScan[i]; minAngle = i; }
+        }
+        if (minD == 0xFFFF) minD = 0;
+
+        // ── Temporal Stability Filter (The Brain Filter) ──
+        for (int i = 0; i < 360; i++) {
+            frameBuffer[currentFrameIdx][i] = tempScan[i];
+        }
+        
+        int stableCount = 0;
+        for (int i = 0; i < 360; i++) {
+            if (tempScan[i] == 0) continue;
+            int appearanceCount = 0;
+            for (int f = 0; f < STABILITY_FRAMES; f++) {
+                uint16_t historicDist = frameBuffer[f][i];
+                if (historicDist > 0 && abs((int)historicDist - (int)tempScan[i]) < STABILITY_TOLERANCE_MM) {
+                    appearanceCount++;
+                }
+            }
+            if (appearanceCount < 3) {
+                tempScan[i] = 0;
+            } else {
+                stableCount++;
+            }
+        }
+        currentFrameIdx = (currentFrameIdx + 1) % STABILITY_FRAMES;
+
+        Serial.printf("[LIDAR] pkts:%lu pts:%d stable:%d closest:%dmm @%ddeg raw:[%u-%u]=%.0f-%.0fdeg\n",
+            parsedPackets, validCount, stableCount, minD, minAngle,
+            rawAngleMin, rawAngleMax,
+            rawAngleMin == 0xFFFF ? 0 : (((rawAngleMin & 0x7FFF) - 0x2000) * 0.01f),
+            rawAngleMax == 0 ? 0 : (((rawAngleMax & 0x7FFF) - 0x2000) * 0.01f));
+
+        // BLE — push raw angle+distance binary pairs
+        if (bleConnected && stableCount > 0) {
+            uint8_t chunk[180];
+            int chunkIdx = 0;
+            for (int i = 0; i < 360; i++) {
+                if (tempScan[i] == 0) continue;
+                chunk[chunkIdx++] = i & 0xFF;
+                chunk[chunkIdx++] = (i >> 8) & 0xFF;
+                chunk[chunkIdx++] = tempScan[i] & 0xFF;
+                chunk[chunkIdx++] = (tempScan[i] >> 8) & 0xFF;
+                if (chunkIdx >= 176) {
+                    lidarChar->setValue(chunk, chunkIdx);
+                    lidarChar->notify();
+                    chunkIdx = 0;
+                    delay(30); // delay between chunks to prevent MTU drop
+                }
+            }
+            if (chunkIdx > 0) {
+                lidarChar->setValue(chunk, chunkIdx);
+                lidarChar->notify();
+            }
+        }
+
+        rawAngleMin = 0xFFFF; rawAngleMax = 0;
+        clearScan();
+        lastSweep = now;
+    }
+
+    // ── Body State stream every 500ms ────────────────────────────────────────
+    static unsigned long lastBodyState = 0;
+    if (now - lastBodyState >= 500) {
+        uint16_t frontMin = getArcMin(scanDist, CommandExecutor::LIDAR_FORWARD_OFFSET_DEG, 25);
+        uint16_t leftMin = getArcMin(scanDist, (CommandExecutor::LIDAR_FORWARD_OFFSET_DEG + 90) % 360, 25);
+        uint16_t rightMin = getArcMin(scanDist, (CommandExecutor::LIDAR_FORWARD_OFFSET_DEG - 90 + 360) % 360, 25);
+
+        uint8_t front_cm = (frontMin == 0xFFFF) ? 255 : constr_cm(frontMin / 10);
+        uint8_t left_cm = (leftMin == 0xFFFF) ? 255 : constr_cm(leftMin / 10);
+        uint8_t right_cm = (rightMin == 0xFFFF) ? 255 : constr_cm(rightMin / 10);
+
+        bool isMoving = motor.motorsActive;
+        bool isObstacleFront = (front_cm < 25);
+        bool isObstacleLeft = (left_cm < 25);
+        bool isObstacleRight = (right_cm < 25);
+
+        uint8_t mood = 0;     // Calm
+        uint8_t arousal = 15;  // Low/resting arousal
+
+        if (isObstacleFront || isObstacleLeft || isObstacleRight) {
+            mood = 2;         // Startled/Agitated
+            arousal = 95;     // High arousal due to close obstacle
+        } else if (isMoving) {
+            mood = 1;         // Active/Moving
+            arousal = 60;     // Moderate arousal
+        }
+
+        uint16_t flags = 0;
+        if (isMoving)        flags |= (1 << 0);
+        if (isObstacleFront) flags |= (1 << 1);
+        if (isObstacleLeft)  flags |= (1 << 2);
+        if (isObstacleRight) flags |= (1 << 3);
+
+        KodaBodyPacket packet;
+        packet.body_mood = mood;
+        packet.arousal = arousal;
+        packet.front_cm = front_cm;
+        packet.left_cm = left_cm;
+        packet.right_cm = right_cm;
+        packet.flags = flags;
+
+        if (bleConnected && bodyChar != nullptr) {
+            bodyChar->setValue((uint8_t*)&packet, sizeof(packet));
+            bodyChar->notify();
+        }
+        lastBodyState = now;
+    }
+
+    // ── Idle blink ───────────────────────────────────────────────────────────
+    static unsigned long lastBlink = 0;
+    if (!bleConnected && now - lastBlink >= BLINK_INTERVAL) {
+        lastBlink = now;
+        ledState = !ledState;
+        setLedColor(ledState ? 10 : 0, ledState ? 10 : 0, 0);
+    }
+
+    delay(1);
 }
