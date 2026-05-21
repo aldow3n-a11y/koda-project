@@ -24,6 +24,13 @@ class LidarScan {
 
   const LidarScan({required this.points, required this.timestamp});
 
+  LidarScan copyWithPoints(List<LidarPoint> newPoints) {
+    return LidarScan(
+      points: newPoints,
+      timestamp: timestamp,
+    );
+  }
+
   int get pointCount => points.length;
   List<LidarPoint> get validPoints => points.where((p) => p.isValid).toList();
 

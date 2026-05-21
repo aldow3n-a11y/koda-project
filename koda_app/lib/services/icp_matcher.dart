@@ -160,10 +160,6 @@ class IcpMatcher {
         final cx = (origin + wX / cellSize).round().clamp(0, gridSize - 1);
         final cy = (origin + wY / cellSize).round().clamp(0, gridSize - 1);
 
-        double minDistSq = double.infinity;
-        int bestCx = -1;
-        int bestCy = -1;
-
         // Search local neighborhood in the grid for nearest occupied cell
         final minX = math.max(0, cx - searchRadiusCells);
         final maxX = math.min(gridSize - 1, cx + searchRadiusCells);
@@ -241,7 +237,7 @@ class IcpMatcher {
           final tLocalY = dWorldX * initialSin + dWorldY * initialCos;
 
           matchedTarget.add(Offset(tLocalX, tLocalY));
-          currentError += math.sqrt(minDistSq);
+          currentError += math.sqrt(matchDistSq);
         }
       }
 

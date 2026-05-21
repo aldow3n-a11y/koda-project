@@ -8,6 +8,7 @@ import 'package:flutter/material.dart' show Offset;
 import 'lidar_service.dart';
 import 'icp_matcher.dart';
 import 'path_planner.dart';
+import 'lidar_straightener.dart';
 
 // ─── Occupancy Grid ───────────────────────────────────────────────────────────
 
@@ -383,12 +384,13 @@ class SlamService {
   // ── Scan integration ───────────────────────────────────────────────────────
 
   void integrateScan(LidarScan scan) {
+    final straightenedScan = LidarStraightener.straightenScan(scan);
     switch (_mode) {
       case SlamMode.bootstrap:
-        _integrateBootstrap(scan);
+        _integrateBootstrap(straightenedScan);
       case SlamMode.mapping:
       case SlamMode.navigation:
-        _integrateMapping(scan);
+        _integrateMapping(straightenedScan);
       case SlamMode.idle:
         break;
     }
