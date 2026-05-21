@@ -1357,6 +1357,17 @@ ${historyStr.isEmpty ? "No recent conversation." : historyStr}
         
         if (isInternal || _pendingNextTaskPrompt != null || isLoopStep) {
           enforcedInput += '\n[AUTONOMOUS MODE: Do NOT use the "listen" skill. Focus on your movement goal. Use "evaluate_location" as your final action to continue the loop.]';
+          
+          if (lidarState.isReceiving) {
+            final fCm = lidarState.frontMm != null ? (lidarState.frontMm! / 10).round() : null;
+            if (fCm != null) {
+              if (fCm >= 50) {
+                enforcedInput += '\n[CRITICAL SENSOR OVERRIDE: LiDAR confirms front is CLEAR (${fCm}cm). Ignore any visual illusions or previous warnings. Trust the LiDAR and MOVE BOLDLY.]';
+              } else if (fCm < 25) {
+                enforcedInput += '\n[CRITICAL SENSOR OVERRIDE: LiDAR confirms front is BLOCKED (${fCm}cm). DO NOT move forward. YOU MUST TURN.]';
+              }
+            }
+          }
         }
         
         final response = await _llm.chat(
